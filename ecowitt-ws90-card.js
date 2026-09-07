@@ -195,7 +195,12 @@ function drawChart(canvas, series, options = {}) {
   const tSpan = Math.max(tMax - tMin, 1);
 
   function axisRange(axisName) {
-    const pts = validSeries.filter((s) => (s.axis || "left") === axisName).flatMap((s) => s.points.map((p) => p.v));
+    const relevant = validSeries.filter((s) => (s.axis || "left") === axisName);
+    const pts = relevant.flatMap((s) => s.points.map((p) => p.v));
+    relevant.forEach((s) => {
+      if (s.extremes?.max) pts.push(s.extremes.max.v);
+      if (s.extremes?.min) pts.push(s.extremes.min.v);
+    });
     if (!pts.length) return null;
     let min = Math.min(...pts);
     let max = Math.max(...pts);
@@ -281,14 +286,24 @@ function drawChart(canvas, series, options = {}) {
       ctx.stroke();
     }
 
-    // Annotation min/max
+    // Annotation min/max : utilise les vraies valeurs min/max des
+    // statistiques HA si disponibles (s.extremes), plutôt que le min/max
+    // de la courbe lissée (moyenne par intervalle), qui peut masquer un
+    // pic bref survenu au sein d'un même intervalle.
     if (options.annotateExtremes && s.points.length > 1) {
-      let minP = s.points[0];
-      let maxP = s.points[0];
-      s.points.forEach((p) => {
-        if (p.v < minP.v) minP = p;
-        if (p.v > maxP.v) maxP = p;
-      });
+      let minP;
+      let maxP;
+      if (s.extremes?.max && s.extremes?.min) {
+        maxP = s.extremes.max;
+        minP = s.extremes.min;
+      } else {
+        minP = s.points[0];
+        maxP = s.points[0];
+        s.points.forEach((p) => {
+          if (p.v < minP.v) minP = p;
+          if (p.v > maxP.v) maxP = p;
+        });
+      }
       [
         { p: maxP, sign: -1 },
         { p: minP, sign: 1 },
@@ -1115,22 +1130,39 @@ class EcowittWs90Card extends HTMLElement {
         .map((row) => ({ t: new Date(row.start).getTime(), v: row[agg] }))
         .filter((p) => p.v !== null && p.v !== undefined);
 
+    // Vraies valeurs min/max des statistiques HA (indépendantes de la
+    // courbe moyenne affichée), pour annoter le pic/creux réel plutôt que
+    // celui de la moyenne lissée par intervalle.
+    const extremesFor = (entityId) => {
+      const rows = stats[entityId] || [];
+      let maxRow = null;
+      let minRow = null;
+      rows.forEach((row) => {
+        if (row.max !== null && row.max !== undefined && (!maxRow || row.max > maxRow.max)) maxRow = row;
+        if (row.min !== null && row.min !== undefined && (!minRow || row.min < minRow.min)) minRow = row;
+      });
+      return {
+        max: maxRow ? { t: new Date(maxRow.start).getTime(), v: maxRow.max } : null,
+        min: minRow ? { t: new Date(minRow.start).getTime(), v: minRow.min } : null,
+      };
+    };
+
     const baseColor = this._themeColor(THEME_COLOR);
 
     if (e.temperature) {
       this._drawWithLegend("temperature", [
-        { label: "Température", color: baseColor, points: seriesFor(e.temperature), unit: "°C" },
+        { label: "Température", color: baseColor, points: seriesFor(e.temperature), unit: "°C", extremes: extremesFor(e.temperature) },
       ], { annotateExtremes: true });
     }
     if (e.humidity) {
       this._drawWithLegend("humidity", [
-        { label: "Humidité", color: baseColor, points: seriesFor(e.humidity), unit: "%" },
+        { label: "Humidité", color: baseColor, points: seriesFor(e.humidity), unit: "%", extremes: extremesFor(e.humidity) },
       ], { annotateExtremes: true });
     }
     if (e.wind_speed || e.wind_gust) {
       const s = [];
-      if (e.wind_speed) s.push({ label: "Vitesse", color: baseColor, points: seriesFor(e.wind_speed), unit: " km/h" });
-      if (e.wind_gust) s.push({ label: "Rafales", color: baseColor, opacity: 0.5, points: seriesFor(e.wind_gust, "max"), unit: " km/h" });
+      if (e.wind_speed) s.push({ label: "Vitesse", color: baseColor, points: seriesFor(e.wind_speed), unit: " km/h", extremes: extremesFor(e.wind_speed) });
+      if (e.wind_gust) s.push({ label: "Rafales", color: baseColor, opacity: 0.5, points: seriesFor(e.wind_gust, "max"), unit: " km/h", extremes: extremesFor(e.wind_gust) });
       this._drawWithLegend("wind", s, { annotateExtremes: true });
     }
     if (e.wind_direction && e.wind_speed) {
@@ -1150,8 +1182,8 @@ class EcowittWs90Card extends HTMLElement {
     }
     if (e.solar_radiation || e.uv_index) {
       const s = [];
-      if (e.solar_radiation) s.push({ label: "Luminosité", color: baseColor, points: seriesFor(e.solar_radiation), unit: " W/m²", axis: "left" });
-      if (e.uv_index) s.push({ label: "UV", color: baseColor, opacity: 0.5, points: seriesFor(e.uv_index, "max"), unit: "", axis: e.solar_radiation ? "right" : "left" });
+      if (e.solar_radiation) s.push({ label: "Luminosité", color: baseColor, points: seriesFor(e.solar_radiation), unit: " W/m²", axis: "left", extremes: extremesFor(e.solar_radiation) });
+      if (e.uv_index) s.push({ label: "UV", color: baseColor, opacity: 0.5, points: seriesFor(e.uv_index, "max"), unit: "", axis: e.solar_radiation ? "right" : "left", extremes: extremesFor(e.uv_index) });
       this._drawWithLegend("sun", s, { annotateExtremes: true });
     }
   }
