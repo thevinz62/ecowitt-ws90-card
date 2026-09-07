@@ -44,6 +44,7 @@ const ENTITY_FIELDS = [
   { key: "rain_daily", label: "Cumul de pluie (jour)", unit: "mm" },
   { key: "solar_radiation", label: "Luminosité", unit: "W/m²" },
   { key: "uv_index", label: "Index UV", unit: "" },
+  { key: "pressure", label: "Pression atmosphérique", unit: "hPa" },
 ];
 
 // Couleur unique des graphiques : reprend la couleur principale du thème HA
@@ -619,6 +620,7 @@ class EcowittWs90Card extends HTMLElement {
         rain_daily: "",
         solar_radiation: "",
         uv_index: "",
+        pressure: "",
       },
       default_mode: "instant",
       default_period: "24h",
@@ -850,7 +852,7 @@ class EcowittWs90Card extends HTMLElement {
         });
       }
       this._loadAndRenderHistorical();
-      ["chart-temperature", "chart-humidity", "chart-wind", "chart-rain", "chart-sun"].forEach((id) => this._attachTooltip(id));
+      ["chart-temperature", "chart-humidity", "chart-wind", "chart-rain", "chart-sun", "chart-pressure"].forEach((id) => this._attachTooltip(id));
     }
   }
 
@@ -939,6 +941,7 @@ class EcowittWs90Card extends HTMLElement {
         ${e.rain_daily ? `<div class="stat" id="s-rain_daily"><div class="label">Pluie du jour</div><div class="value">--</div></div>` : ""}
         ${e.solar_radiation ? statWithGraph("solar_radiation", "Luminosité") : ""}
         ${e.uv_index ? statWithGraph("uv_index", "Index UV") : ""}
+        ${e.pressure ? `<div class="stat" id="s-pressure"><div class="label">Pression</div><div class="value">--</div></div>` : ""}
       </div>
       ${this._config.show_records ? `<div class="section-title">Records de la station</div><div class="records-grid" id="records-container"><div class="empty">Chargement…</div></div>` : ""}
     `;
@@ -965,6 +968,7 @@ class EcowittWs90Card extends HTMLElement {
       ${e.wind_direction && e.wind_speed ? this._windRoseBlock() : ""}
       ${e.rain_rate || e.rain_daily ? this._chartBlock("rain", "Pluie", "mm") : ""}
       ${e.solar_radiation || e.uv_index ? this._chartBlock("sun", "Luminosité & Index UV", "") : ""}
+      ${e.pressure ? this._chartBlock("pressure", "Pression atmosphérique", "hPa") : ""}
     `;
   }
 
@@ -1016,6 +1020,7 @@ class EcowittWs90Card extends HTMLElement {
     if (e.rain_daily) set("rain_daily", `${fmt(this._stateNum(e.rain_daily))} mm`);
     if (e.solar_radiation) set("solar_radiation", `${fmt(this._stateNum(e.solar_radiation), 0)} W/m²`);
     if (e.uv_index) set("uv_index", `${fmt(this._stateNum(e.uv_index), 1)}`);
+    if (e.pressure) set("pressure", `${fmt(this._stateNum(e.pressure), 1)} hPa`);
   }
 
   _stateNum(entityId) {
@@ -1187,6 +1192,11 @@ class EcowittWs90Card extends HTMLElement {
       if (e.solar_radiation) s.push({ label: "Luminosité", color: baseColor, points: seriesFor(e.solar_radiation), unit: " W/m²", axis: "left", extremes: extremesFor(e.solar_radiation) });
       if (e.uv_index) s.push({ label: "UV", color: baseColor, opacity: 0.5, points: seriesFor(e.uv_index, "max"), unit: "", axis: e.solar_radiation ? "right" : "left", extremes: extremesFor(e.uv_index) });
       this._drawWithLegend("sun", s, { annotateExtremes: true });
+    }
+    if (e.pressure) {
+      this._drawWithLegend("pressure", [
+        { label: "Pression", color: baseColor, points: seriesFor(e.pressure), unit: " hPa", extremes: extremesFor(e.pressure) },
+      ], { annotateExtremes: true });
     }
   }
 
