@@ -79,6 +79,8 @@ const MINI_GRAPH_FIELDS = [
   { key: "humidity", icon: "mdi:water-percent", agg: "mean" },
   { key: "wind_speed", icon: "mdi:weather-windy", agg: "mean" },
   { key: "wind_gust", icon: "mdi:weather-windy-variant", agg: "max" },
+  { key: "uv_index", icon: "mdi:sun-wireless", agg: "max" },
+  { key: "solar_radiation", icon: "mdi:white-balance-sunny", agg: "mean" },
 ];
 
 // Icônes utilisées dans le panneau "Records de la station"
@@ -935,8 +937,8 @@ class EcowittWs90Card extends HTMLElement {
         ${e.wind_direction ? `<div class="stat compass-stat" id="s-wind_direction"><div class="label">Direction</div><canvas class="compass-canvas" id="compass-canvas"></canvas><div class="value compass-value">--</div></div>` : ""}
         ${e.rain_rate ? `<div class="stat" id="s-rain_rate"><div class="label">Pluie</div><div class="value">--</div></div>` : ""}
         ${e.rain_daily ? `<div class="stat" id="s-rain_daily"><div class="label">Pluie du jour</div><div class="value">--</div></div>` : ""}
-        ${e.solar_radiation ? `<div class="stat" id="s-solar_radiation"><div class="label">Luminosité</div><div class="value">--</div></div>` : ""}
-        ${e.uv_index ? `<div class="stat" id="s-uv_index"><div class="label">Index UV</div><div class="value">--</div></div>` : ""}
+        ${e.solar_radiation ? statWithGraph("solar_radiation", "Luminosité") : ""}
+        ${e.uv_index ? statWithGraph("uv_index", "Index UV") : ""}
       </div>
       ${this._config.show_records ? `<div class="section-title">Records de la station</div><div class="records-grid" id="records-container"><div class="empty">Chargement…</div></div>` : ""}
     `;
