@@ -82,6 +82,7 @@ const MINI_GRAPH_FIELDS = [
   { key: "wind_gust", icon: "mdi:weather-windy-variant", agg: "max" },
   { key: "uv_index", icon: "mdi:sun-wireless", agg: "max" },
   { key: "solar_radiation", icon: "mdi:white-balance-sunny", agg: "mean" },
+  { key: "pressure", icon: "mdi:gauge", agg: "mean" },
 ];
 
 // Icônes utilisées dans le panneau "Records de la station"
@@ -653,7 +654,8 @@ class EcowittWs90Card extends HTMLElement {
     this._records = null;
     this._recordsLoading = false;
     this._miniGraphsLoading = false;
-    this._miniGraphsEverLoaded = false;
+    this._miniGraphsFullyLoaded = false;
+    this._miniGraphsLastAttempt = 0;
 
     if (!this._root) {
       this._root = this.attachShadow({ mode: "open" });
@@ -695,7 +697,8 @@ class EcowittWs90Card extends HTMLElement {
     this._stopMiniGraphRefresh();
     if (!this._config.show_mini_graphs) return;
     this._miniGraphInterval = setInterval(() => {
-      this._miniGraphsEverLoaded = false;
+      this._miniGraphsFullyLoaded = false;
+      this._miniGraphsLastAttempt = 0;
       this._loadMiniGraphs();
     }, 5 * 60 * 1000);
   }
@@ -709,7 +712,16 @@ class EcowittWs90Card extends HTMLElement {
 
   async _loadMiniGraphs() {
     if (!this._hass || this._mode !== "instant" || !this._config.show_mini_graphs) return;
-    if (this._miniGraphsEverLoaded || this._miniGraphsLoading) return;
+    if (this._miniGraphsLoading || this._miniGraphsFullyLoaded) return;
+    // Tant que toutes les entités n'ont pas encore de données (capteur
+    // récemment ajouté, historique pas encore constitué...), on retente
+    // périodiquement plutôt que d'abandonner définitivement — mais on
+    // limite la fréquence pour ne pas spammer l'API à chaque mise à jour
+    // de hass.
+    const now = Date.now();
+    if (this._miniGraphsLastAttempt && now - this._miniGraphsLastAttempt < 30000) return;
+    this._miniGraphsLastAttempt = now;
+
     const e = this._config.entities;
     const fields = MINI_GRAPH_FIELDS.filter((f) => e[f.key]);
     if (!fields.length) return;
@@ -724,9 +736,9 @@ class EcowittWs90Card extends HTMLElement {
       stats = await fetchStatistics(this._hass, ids, start.toISOString(), end.toISOString(), period.statPeriod);
     } finally {
       this._miniGraphsLoading = false;
-      this._miniGraphsEverLoaded = true;
     }
 
+    let allHaveData = true;
     fields.forEach((f) => {
       const canvas = this._root.getElementById(`spark-${f.key}`);
       if (!canvas) return;
@@ -734,8 +746,10 @@ class EcowittWs90Card extends HTMLElement {
       const points = rows
         .map((row) => ({ t: new Date(row.start).getTime(), v: row[f.agg] }))
         .filter((p) => p.v !== null && p.v !== undefined);
+      if (!points.length) allHaveData = false;
       requestAnimationFrame(() => drawSparkline(canvas, points, this._themeColor(THEME_COLOR)));
     });
+    this._miniGraphsFullyLoaded = allHaveData;
   }
 
   /* ---- structure statique ---- */
@@ -827,7 +841,8 @@ class EcowittWs90Card extends HTMLElement {
       body.innerHTML = this._instantSkeleton();
       this._renderInstantValues();
       this._renderRecords();
-      this._miniGraphsEverLoaded = false;
+      this._miniGraphsFullyLoaded = false;
+      this._miniGraphsLastAttempt = 0;
       this._loadMiniGraphs();
       this._startMiniGraphRefresh();
     } else {
@@ -941,7 +956,7 @@ class EcowittWs90Card extends HTMLElement {
         ${e.rain_daily ? `<div class="stat" id="s-rain_daily"><div class="label">Pluie du jour</div><div class="value">--</div></div>` : ""}
         ${e.solar_radiation ? statWithGraph("solar_radiation", "Luminosité") : ""}
         ${e.uv_index ? statWithGraph("uv_index", "Index UV") : ""}
-        ${e.pressure ? `<div class="stat" id="s-pressure"><div class="label">Pression</div><div class="value">--</div></div>` : ""}
+        ${e.pressure ? statWithGraph("pressure", "Pression") : ""}
       </div>
       ${this._config.show_records ? `<div class="section-title">Records de la station</div><div class="records-grid" id="records-container"><div class="empty">Chargement…</div></div>` : ""}
     `;
