@@ -654,7 +654,7 @@ class EcowittWs90Card extends HTMLElement {
     this._records = null;
     this._recordsLoading = false;
     this._miniGraphsLoading = false;
-    this._miniGraphsFullyLoaded = false;
+    this._miniGraphsLoadedFields = new Set();
     this._miniGraphsLastAttempt = 0;
 
     if (!this._root) {
@@ -697,7 +697,9 @@ class EcowittWs90Card extends HTMLElement {
     this._stopMiniGraphRefresh();
     if (!this._config.show_mini_graphs) return;
     this._miniGraphInterval = setInterval(() => {
-      this._miniGraphsFullyLoaded = false;
+      // Rafraîchissement périodique : on ré-interroge tout, y compris les
+      // métriques déjà chargées, pour garder les courbes à jour.
+      this._miniGraphsLoadedFields.clear();
       this._miniGraphsLastAttempt = 0;
       this._loadMiniGraphs();
     }, 5 * 60 * 1000);
@@ -712,19 +714,23 @@ class EcowittWs90Card extends HTMLElement {
 
   async _loadMiniGraphs() {
     if (!this._hass || this._mode !== "instant" || !this._config.show_mini_graphs) return;
-    if (this._miniGraphsLoading || this._miniGraphsFullyLoaded) return;
-    // Tant que toutes les entités n'ont pas encore de données (capteur
-    // récemment ajouté, historique pas encore constitué...), on retente
+    if (this._miniGraphsLoading) return;
+
+    const e = this._config.entities;
+    // On ne redemande QUE les métriques pas encore chargées avec succès —
+    // une métrique qui a des données ne bloque ni n'est bloquée par les
+    // autres : chacune est suivie indépendamment.
+    const fields = MINI_GRAPH_FIELDS.filter((f) => e[f.key] && !this._miniGraphsLoadedFields.has(f.key));
+    if (!fields.length) return;
+
+    // Tant qu'il reste des métriques sans données (capteur récemment
+    // ajouté, historique pas encore constitué...), on retente
     // périodiquement plutôt que d'abandonner définitivement — mais on
     // limite la fréquence pour ne pas spammer l'API à chaque mise à jour
     // de hass.
     const now = Date.now();
     if (this._miniGraphsLastAttempt && now - this._miniGraphsLastAttempt < 30000) return;
     this._miniGraphsLastAttempt = now;
-
-    const e = this._config.entities;
-    const fields = MINI_GRAPH_FIELDS.filter((f) => e[f.key]);
-    if (!fields.length) return;
     this._miniGraphsLoading = true;
 
     const period = MINI_PERIODS.find((p) => p.key === this._config.mini_graph_period) || MINI_PERIODS[3];
@@ -738,7 +744,6 @@ class EcowittWs90Card extends HTMLElement {
       this._miniGraphsLoading = false;
     }
 
-    let allHaveData = true;
     fields.forEach((f) => {
       const canvas = this._root.getElementById(`spark-${f.key}`);
       if (!canvas) return;
@@ -746,10 +751,9 @@ class EcowittWs90Card extends HTMLElement {
       const points = rows
         .map((row) => ({ t: new Date(row.start).getTime(), v: row[f.agg] }))
         .filter((p) => p.v !== null && p.v !== undefined);
-      if (!points.length) allHaveData = false;
+      if (points.length) this._miniGraphsLoadedFields.add(f.key);
       requestAnimationFrame(() => drawSparkline(canvas, points, this._themeColor(THEME_COLOR)));
     });
-    this._miniGraphsFullyLoaded = allHaveData;
   }
 
   /* ---- structure statique ---- */
@@ -841,7 +845,11 @@ class EcowittWs90Card extends HTMLElement {
       body.innerHTML = this._instantSkeleton();
       this._renderInstantValues();
       this._renderRecords();
-      this._miniGraphsFullyLoaded = false;
+      // Les canvases sont recréés à chaque entrée dans la vue instantanée :
+      // on force donc un nouveau tracé pour toutes les métriques, même
+      // celles déjà chargées précédemment (les anciens canvases n'existent
+      // plus).
+      this._miniGraphsLoadedFields.clear();
       this._miniGraphsLastAttempt = 0;
       this._loadMiniGraphs();
       this._startMiniGraphRefresh();
@@ -1198,9 +1206,9 @@ class EcowittWs90Card extends HTMLElement {
     }
     if (e.rain_rate || e.rain_daily) {
       const s = [];
-      if (e.rain_daily) s.push({ label: "Cumul", color: baseColor, points: seriesFor(e.rain_daily, "max"), type: "bar", unit: " mm" });
-      else if (e.rain_rate) s.push({ label: "Intensité", color: baseColor, points: seriesFor(e.rain_rate, "max"), type: "bar", unit: " mm/h" });
-      this._drawWithLegend("rain", s, {});
+      if (e.rain_daily) s.push({ label: "Cumul", color: baseColor, points: seriesFor(e.rain_daily, "max"), unit: " mm", extremes: extremesFor(e.rain_daily) });
+      else if (e.rain_rate) s.push({ label: "Intensité", color: baseColor, points: seriesFor(e.rain_rate, "max"), unit: " mm/h", extremes: extremesFor(e.rain_rate) });
+      this._drawWithLegend("rain", s, { annotateExtremes: true });
     }
     if (e.solar_radiation || e.uv_index) {
       const s = [];
