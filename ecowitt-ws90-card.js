@@ -30,7 +30,7 @@ const PERIODS = [
   { key: "24h", label: "24 h", hours: 24, statPeriod: "5minute" },
   { key: "7d", label: "7 j", hours: 24 * 7, statPeriod: "hour" },
   { key: "30d", label: "30 j", hours: 24 * 30, statPeriod: "hour" },
-  { key: "1y", label: "1 an", hours: 24 * 365, statPeriod: "day" },
+  { key: "1y", label: "1 an", hours: 24 * 365, statPeriod: "hour" },
 ];
 
 // Champs d'entités attendus dans la config, avec libellé + unité par défaut
@@ -1144,7 +1144,10 @@ class EcowittWs90Card extends HTMLElement {
       end = new Date(`${this._customEnd}T23:59:59`);
       if (end < start) [start, end] = [end, start];
       const spanHours = (end - start) / 3600000;
-      statPeriod = spanHours <= 48 ? "5minute" : spanHours <= 24 * 45 ? "hour" : "day";
+      // Aligné sur le comportement natif de Home Assistant : la résolution
+      // horaire est conservée bien au-delà de quelques semaines (jusqu'à
+      // plusieurs années) avant de basculer sur une moyenne journalière.
+      statPeriod = spanHours <= 48 ? "5minute" : spanHours <= 24 * 730 ? "hour" : "day";
     } else {
       const period = PERIODS.find((p) => p.key === this._period) || PERIODS[0];
       end = new Date();
