@@ -727,6 +727,16 @@ class EcowittWs90Card extends HTMLElement {
     if (this._config && this._root && !this._connected) {
       this._connected = true;
     }
+    // La carte peut être détachée puis rattachée au DOM par Lovelace (ex.
+    // réorganisation d'une mise en page en grille) : sans ce redémarrage,
+    // le rafraîchissement périodique des mini-graphiques restait arrêté
+    // indéfiniment après un tel détachement.
+    if (this._config?.show_mini_graphs && this._mode === "instant" && !this._miniGraphInterval) {
+      this._miniGraphsLoadedFields?.clear();
+      this._miniGraphsLastAttempt = 0;
+      this._loadMiniGraphs();
+      this._startMiniGraphRefresh();
+    }
   }
 
   disconnectedCallback() {
@@ -742,7 +752,7 @@ class EcowittWs90Card extends HTMLElement {
       this._miniGraphsLoadedFields.clear();
       this._miniGraphsLastAttempt = 0;
       this._loadMiniGraphs();
-    }, 5 * 60 * 1000);
+    }, 60 * 1000);
   }
 
   _stopMiniGraphRefresh() {
