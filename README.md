@@ -9,9 +9,9 @@ capteurs modèles...).
 
 Deux vues, accessibles via un bouton en haut de la carte :
 
-- **Instantané** : valeurs en direct, avec un mini-graphique de tendance en
-  option sous chaque valeur, une boussole pour la direction du vent, et un
-  panneau de records de la station.
+- **Instantané** : graphe combiné température/humidité, ligne vent avec
+  boussole, puis luminosité/UV, pluie et pression — avec mini-graphiques de
+  tendance en option, et un panneau de records de la station.
 - **Historique** : un graphique par métrique (température, humidité, vent,
   pluie, luminosité/UV, pression), avec période sélectionnable (24 h / 7 j /
   30 j / 1 an ou dates personnalisées), badges min/max, infobulle au survol,
