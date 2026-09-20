@@ -149,6 +149,62 @@ async function fetchStatistics(hass, statisticIds, startTime, endTime, period) {
   }
 }
 
+/**
+ * Récupère l'historique BRUT (chaque changement d'état individuel, pas de
+ * moyenne par intervalle) via l'API interne de Home Assistant. Utilisé
+ * uniquement pour la rose des vents, où la variabilité naturelle fine du
+ * vent est perdue par les statistiques agrégées.
+ *
+ * Cette API n'est pas un contrat public documenté et son format exact a pu
+ * varier selon les versions de Home Assistant — la fonction essaie
+ * plusieurs noms de champs possibles et retourne `null` (plutôt qu'un objet
+ * vide) en cas d'échec, pour permettre à l'appelant de distinguer
+ * "aucune donnée" d'un "cette API n'a pas fonctionné, il faut se rabattre
+ * sur les statistiques".
+ */
+async function fetchRawHistory(hass, entityIds, startTime, endTime) {
+  const ids = entityIds.filter(Boolean);
+  if (!ids.length) return {};
+  try {
+    const resp = await hass.callWS({
+      type: "history/history_during_period",
+      start_time: startTime,
+      end_time: endTime,
+      entity_ids: ids,
+      minimal_response: false,
+      no_attributes: true,
+      significant_changes_only: false,
+    });
+    if (!resp || typeof resp !== "object") return null;
+
+    const parseTime = (entry) => {
+      const raw = entry.lu ?? entry.last_updated ?? entry.lc ?? entry.last_changed;
+      if (raw === undefined || raw === null) return null;
+      if (typeof raw === "number") return raw * 1000; // secondes epoch -> ms
+      const d = new Date(raw);
+      return Number.isNaN(d.getTime()) ? null : d.getTime();
+    };
+    const parseState = (entry) => (entry.s !== undefined ? entry.s : entry.state);
+
+    const out = {};
+    ids.forEach((id) => {
+      const entries = Array.isArray(resp[id]) ? resp[id] : [];
+      out[id] = entries
+        .map((entry) => {
+          const t = parseTime(entry);
+          const raw = parseState(entry);
+          const v = raw === undefined || raw === null || raw === "" ? NaN : parseFloat(raw);
+          return { t, v };
+        })
+        .filter((p) => p.t !== null && !Number.isNaN(p.v));
+    });
+    return out;
+  } catch (err) {
+    console.error(`${CARD_TAG}: échec de récupération de l'historique brut`, err);
+    return null;
+  }
+}
+
 /* ============================================================================
  * Rendu graphique (Canvas 2D, sans dépendance externe)
  * ==========================================================================*/
@@ -466,16 +522,40 @@ function buildHourlyDeltaBars(cumulativePoints) {
 /**
  * Associe les échantillons de direction et de vitesse par timestamp et les
  * répartit en secteurs (direction) x classes de vitesse.
+ *
+ * Les deux séries proviennent d'appels statistiques distincts et peuvent ne
+ * pas partager exactement les mêmes horodatages (mise à jour à des instants
+ * légèrement différents, capteurs de cadences différentes...). Une
+ * correspondance par égalité stricte du timestamp écarterait alors
+ * silencieusement une grande partie des échantillons — on cherche donc le
+ * point de vitesse le plus proche dans le temps, dans une tolérance
+ * raisonnable, plutôt qu'une correspondance exacte.
  */
-function buildWindRoseData(dirPoints, speedPoints) {
-  const speedByT = new Map(speedPoints.map((p) => [p.t, p.v]));
+function buildWindRoseData(dirPoints, speedPoints, toleranceMs = 30 * 60 * 1000) {
+  const sortedSpeed = [...speedPoints].sort((a, b) => a.t - b.t);
+
+  const findNearestSpeed = (t) => {
+    if (!sortedSpeed.length) return undefined;
+    let lo = 0;
+    let hi = sortedSpeed.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sortedSpeed[mid].t < t) lo = mid + 1;
+      else hi = mid;
+    }
+    let best = sortedSpeed[lo];
+    if (lo > 0 && Math.abs(sortedSpeed[lo - 1].t - t) < Math.abs(best.t - t)) best = sortedSpeed[lo - 1];
+    return Math.abs(best.t - t) <= toleranceMs ? best.v : undefined;
+  };
+
   const sectorSize = 360 / WIND_ROSE_SECTORS;
   const bins = Array.from({ length: WIND_ROSE_SECTORS }, () => new Array(WIND_ROSE_SPEED_BINS.length).fill(0));
   let total = 0;
 
   dirPoints.forEach((p) => {
-    const spd = speedByT.get(p.t);
-    if (spd === undefined || spd === null || p.v === null || p.v === undefined) return;
+    if (p.v === null || p.v === undefined) return;
+    const spd = findNearestSpeed(p.t);
+    if (spd === undefined || spd === null) return;
     const deg = ((p.v % 360) + 360) % 360;
     const sectorIdx = Math.round(deg / sectorSize) % WIND_ROSE_SECTORS;
     let speedIdx = WIND_ROSE_SPEED_BINS.findIndex((max) => spd <= max);
@@ -1393,10 +1473,53 @@ class EcowittWs90Card extends HTMLElement {
     if (e.wind_direction && e.wind_speed) {
       const roseCanvas = this._root.getElementById("chart-windrose");
       if (roseCanvas) {
-        const dirPoints = seriesFor(e.wind_direction);
-        const speedPoints = seriesFor(e.wind_speed);
-        const roseData = buildWindRoseData(dirPoints, speedPoints);
-        requestAnimationFrame(() => drawWindRose(roseCanvas, roseData, baseColor));
+        // Rose des vents : on tente l'historique BRUT (chaque relevé
+        // individuel, pas de moyenne) pour retrouver la vraie variabilité
+        // naturelle du vent — bien plus proche d'un outil dédié. Cette API
+        // interne n'est pas un contrat stable entre versions de Home
+        // Assistant : en cas d'échec ou de réponse vide, on se rabat
+        // automatiquement sur les statistiques agrégées (comme avant),
+        // pour ne jamais se retrouver avec une rose vide.
+        // Au-delà d'une certaine durée, l'historique brut représenterait
+        // un volume de données déraisonnable : on se limite directement
+        // aux statistiques dans ce cas.
+        const spanMs = end - start;
+        const RAW_HISTORY_MAX_SPAN_MS = 9 * 24 * 3600 * 1000;
+
+        (async () => {
+          let dirPoints = [];
+          let speedPoints = [];
+          let source = "statistiques";
+
+          if (spanMs <= RAW_HISTORY_MAX_SPAN_MS) {
+            const rawHistory = await fetchRawHistory(this._hass, [e.wind_direction, e.wind_speed], start.toISOString(), end.toISOString());
+            const rawDir = rawHistory?.[e.wind_direction] || [];
+            const rawSpeed = rawHistory?.[e.wind_speed] || [];
+            if (rawHistory && (rawDir.length || rawSpeed.length)) {
+              dirPoints = rawDir;
+              speedPoints = rawSpeed;
+              source = "historique brut";
+            }
+          }
+
+          if (source === "statistiques") {
+            const roseStatPeriod = spanMs <= RAW_HISTORY_MAX_SPAN_MS ? "5minute" : "hour";
+            const roseStats = await fetchStatistics(this._hass, [e.wind_direction, e.wind_speed], start.toISOString(), end.toISOString(), roseStatPeriod);
+            dirPoints = (roseStats[e.wind_direction] || [])
+              .map((row) => ({ t: new Date(row.start).getTime(), v: row.mean }))
+              .filter((p) => p.v !== null && p.v !== undefined);
+            speedPoints = (roseStats[e.wind_speed] || [])
+              .map((row) => ({ t: new Date(row.start).getTime(), v: row.mean }))
+              .filter((p) => p.v !== null && p.v !== undefined);
+          }
+
+          // Tolérance d'appariement plus stricte pour l'historique brut
+          // (relevés potentiellement très fréquents) que pour les
+          // statistiques agrégées (intervalles plus larges).
+          const tolerance = source === "historique brut" ? 5 * 60 * 1000 : 30 * 60 * 1000;
+          const roseData = buildWindRoseData(dirPoints, speedPoints, tolerance);
+          requestAnimationFrame(() => drawWindRose(roseCanvas, roseData, baseColor));
+        })();
       }
     }
     if (e.rain_daily) {
