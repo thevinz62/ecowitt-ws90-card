@@ -3,45 +3,48 @@
 Carte Lovelace personnalisée pour Home Assistant, pensée pour afficher les
 données d'une station météo — conçue à l'origine pour une station **Ecowitt
 WS90**, mais elle fonctionne avec n'importe quelle entité capteur exposant
-température, humidité, vent, pluie, luminosité, UV ou pression, quelle que
-soit leur source (intégration Ecowitt, Météo-France, capteurs personnalisés,
-capteurs modèles...).
+température, humidité, vent, pluie, radiation solaire, UV ou pression, quelle
+que soit leur source (intégration Ecowitt, Météo-France, capteurs
+personnalisés, capteurs modèles...).
 
 Deux vues, accessibles via un bouton en haut de la carte :
 
-- **Instantané** : graphe combiné température/humidité, ligne vent avec
-  boussole, puis luminosité/UV, pluie et pression — avec mini-graphiques de
-  tendance en option, et un panneau de records de la station.
+- **Instantané** : graphe combiné température/humidité (avec le min/max du
+  jour sous la valeur actuelle), ligne vent avec boussole, puis radiation
+  solaire/UV, pluie et pression — avec mini-graphiques de tendance en
+  option, et un panneau de records de la station.
 - **Historique** : un graphique par métrique (température, humidité, vent,
-  pluie, luminosité/UV, pression), avec période sélectionnable (24 h / 7 j /
-  30 j / 1 an ou dates personnalisées), badges min/max, infobulle au survol,
-  et une rose des vents.
+  pluie, radiation solaire/UV, pression), avec période sélectionnable
+  (24 h / 7 j / 30 j / 1 an ou dates personnalisées), badges min/max réels,
+  infobulle au survol, et une rose des vents.
 
 La carte est autonome : aucune dépendance externe (pas d'ApexCharts, pas de
-Chart.js) — tous les graphiques sont dessinés en Canvas 2D natif.
+Chart.js) — tous les graphiques sont dessinés en Canvas 2D natif, via un
+seul et même moteur de rendu (utilisé aussi bien pour les graphiques
+historiques que pour les mini-graphiques), ce qui garantit un rendu
+cohérent quel que soit le thème Home Assistant utilisé.
 
 ## Aperçu des fonctionnalités
 
 | Fonctionnalité | Détail |
 |---|---|
-| Vue Instantané | Valeurs en direct pour chaque métrique configurée |
-| Mini-graphiques | Tendance récente sous temp./humidité/vent/rafales/UV/luminosité/pression, durée réglable (1h à 7j), activables/désactivables |
-| Boussole | Représentation visuelle de la direction du vent |
-| Records de la station | Min/max historiques (température, humidité, rafale, pluie, UV) — calculés automatiquement, sans automation à créer |
-| Vue Historique | Un graphique par métrique, avec badges min/max réels |
+| Graphe température/humidité | Courbes combinées, avec min/max du jour affiché sous la valeur actuelle (flèches colorées) |
+| Ligne Vent | Boussole + vitesse, direction et rafale en direct |
+| Mini-graphiques | Tendance récente pour radiation solaire/UV/pression, durée réglable (1h à 7j), activables/désactivables |
+| Records de la station | Température min/max, rafale max, intensité de pluie max, radiation solaire max, cumul journalier max — calculés automatiquement, sans automation à créer |
+| Vue Historique | Un graphique par métrique, avec badges min/max réels et infobulle au survol |
 | Période personnalisée | Sélecteur de deux dates en plus des périodes prédéfinies |
 | Rose des vents | Répartition direction/force du vent sur la période choisie |
-| Infobulle | Valeur et date au survol d'un graphique historique |
-| Couleur liée au thème | S'adapte automatiquement au thème Home Assistant actif |
+| Couleur liée au thème | Une seule couleur pour toute la carte, reprise automatiquement du thème Home Assistant actif |
 
 ## Prérequis
 
 - Home Assistant récent (avec le composant `recorder` activé, actif par
   défaut).
-- Les fonctionnalités de la vue Historique, les mini-graphiques et les
-  records nécessitent que vos capteurs aient des **statistiques long terme**
-  activées côté Home Assistant (voir la section [Dépannage](#dépannage) si
-  un graphique reste vide).
+- La vue Historique, les mini-graphiques, le min/max du jour et les
+  records nécessitent que vos capteurs aient des **statistiques long
+  terme** activées côté Home Assistant (voir la section
+  [Dépannage](#dépannage) si un graphique reste vide).
 - HACS, si vous installez via un dépôt personnalisé (recommandé). Une
   installation manuelle est aussi possible.
 
@@ -108,8 +111,9 @@ entities:
 ```
 
 Tous les champs sous `entities` sont **facultatifs** : n'indiquez que ceux
-que vous possédez, les sections correspondantes (valeur, mini-graphique,
-graphique historique, record) apparaissent ou disparaissent automatiquement.
+que vous possédez, les sections correspondantes (graphe, ligne vent,
+mini-graphique, graphique historique, record) apparaissent ou disparaissent
+automatiquement.
 
 ### Référence des options
 
@@ -119,7 +123,7 @@ graphique historique, record) apparaissent ou disparaissent automatiquement.
 | `default_mode` | `instant` \| `historical` | `instant` | Vue affichée à l'ouverture |
 | `default_period` | `24h` \| `7d` \| `30d` \| `1y` | `24h` | Période par défaut de la vue Historique |
 | `show_records` | `true` \| `false` | `true` | Afficher le panneau des records |
-| `show_mini_graphs` | `true` \| `false` | `true` | Afficher les mini-graphiques en vue Instantané |
+| `show_mini_graphs` | `true` \| `false` | `true` | Afficher le graphe température/humidité et les mini-graphiques radiation solaire/UV/pression |
 | `mini_graph_period` | `1h` \| `6h` \| `12h` \| `24h` \| `48h` \| `7d` | `24h` | Durée affichée par les mini-graphiques |
 | `entities.*` | `entity_id` | — | Voir tableau ci-dessous |
 
@@ -134,7 +138,7 @@ graphique historique, record) apparaissent ou disparaissent automatiquement.
 | `wind_direction` | Direction du vent (0-360°) | ° |
 | `rain_rate` | Intensité de pluie instantanée | mm/h |
 | `rain_daily` | Cumul de pluie du jour | mm |
-| `solar_radiation` | Luminosité / rayonnement solaire | W/m² |
+| `solar_radiation` | Radiation solaire | W/m² |
 | `uv_index` | Index UV | — |
 | `pressure` | Pression atmosphérique | hPa |
 
@@ -159,8 +163,32 @@ template:
 
 `state_class: measurement` est important : sans lui, Home Assistant ne
 calcule aucune statistique pour ce capteur, ce qui empêche la vue
-Historique, les mini-graphiques et les records de fonctionner pour cette
-donnée (voir [Dépannage](#dépannage)).
+Historique, les mini-graphiques, le min/max du jour et les records de
+fonctionner pour cette donnée (voir [Dépannage](#dépannage)).
+
+## Détail des sections de la vue Instantanée
+
+- **Température & humidité** : les deux courbes sur un même graphique,
+  avec les valeurs actuelles au-dessus et, pour la température, le
+  minimum et le maximum du **jour calendaire en cours** juste en dessous
+  (flèche rouge pour le max, bleue pour le min, avec l'heure approximative
+  à 5 minutes près).
+- **Vent** : une boussole (aiguille pointant vers la direction vers
+  laquelle souffle le vent) accompagnée de la vitesse, la direction et la
+  rafale en direct.
+- **Radiation solaire & UV**, **Pluie**, **Pression** : tuiles avec valeur
+  actuelle et, pour radiation solaire/UV/pression, un mini-graphique de
+  tendance en option.
+- **Records de la station** : température max/min, rafale max, intensité
+  de pluie max, radiation solaire max et cumul journalier max (le jour le
+  plus pluvieux enregistré), chacun avec sa date. L'humidité et l'index UV
+  ne sont volontairement pas dans cette liste (records peu pertinents pour
+  ces valeurs).
+
+Dans la vue Historique, le graphique Pluie affiche uniquement la
+**quantité tombée par heure** (barres), calculée à partir des cumuls
+successifs du capteur `rain_daily`, avec une gestion propre du passage à
+minuit (pas de valeur négative).
 
 ## Personnalisation de la couleur
 
@@ -183,9 +211,9 @@ style: |
 
 **Un graphique ou un mini-graphique reste vide alors que l'entité affiche
 une valeur.**
-La vue Historique, les mini-graphiques et les records reposent sur les
-statistiques long terme de Home Assistant, pas sur la simple valeur actuelle
-de l'entité. Deux causes possibles :
+La vue Historique, les mini-graphiques, le min/max du jour et les records
+reposent sur les statistiques long terme de Home Assistant, pas sur la
+simple valeur actuelle de l'entité. Deux causes possibles :
 - Le capteur vient d'être ajouté : les statistiques s'accumulent à partir de
   maintenant, il faut laisser passer un peu de temps (quelques minutes pour
   voir les premiers points, en fonction de la période choisie).
@@ -195,6 +223,15 @@ de l'entité. Deux causes possibles :
   l'entité. Sans cette ligne, aucune statistique ne sera jamais calculée,
   quel que soit le temps écoulé. Vous pouvez aussi vérifier la présence de
   l'entité dans **Outils de développement > Statistiques**.
+
+**Le graphique Pluie reste vide alors que l'entité `rain_daily` a des
+valeurs.**
+Un capteur de cumul journalier qui se remet à zéro à minuit
+(`state_class: total`) n'a souvent que la statistique `sum` de calculée
+par Home Assistant, pas de `max`/`mean`/`min`. La carte gère ce cas
+automatiquement en essayant plusieurs champs dans l'ordre ; si le
+graphique reste malgré tout vide, vérifiez que le capteur a bien un
+`state_class` (measurement ou total) dans ses attributs.
 
 **Les records n'affichent qu'une date, sans heure.**
 Normal : ils sont calculés à partir de statistiques agrégées par jour, qui
@@ -211,6 +248,9 @@ marginal sur les périodes courtes (24h/7j) et un peu plus visible sur "1 an"
 Elle nécessite que `wind_direction` **et** `wind_speed` soient tous les deux
 configurés.
 
-**La période "1 an" met du temps à charger.**
+**La période "1 an" ou une période personnalisée longue met du temps à
+charger.**
 Normal sur les installations avec beaucoup d'historique ; le chargement se
-fait une seule fois par sélection de période.
+fait une seule fois par sélection de période. La résolution horaire est
+conservée jusqu'à environ 2 ans (alignée sur le comportement natif de
+Home Assistant) avant de basculer sur une moyenne journalière.

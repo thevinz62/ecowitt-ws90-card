@@ -42,7 +42,7 @@ const ENTITY_FIELDS = [
   { key: "wind_direction", label: "Direction du vent", unit: "°" },
   { key: "rain_rate", label: "Intensité de pluie", unit: "mm/h" },
   { key: "rain_daily", label: "Cumul de pluie (jour)", unit: "mm" },
-  { key: "solar_radiation", label: "Luminosité", unit: "W/m²" },
+  { key: "solar_radiation", label: "Radiation solaire", unit: "W/m²" },
   { key: "uv_index", label: "Index UV", unit: "" },
   { key: "pressure", label: "Pression atmosphérique", unit: "hPa" },
 ];
@@ -87,11 +87,10 @@ const MINI_GRAPH_FIELDS = [
 const RECORD_ICONS = {
   temperature_max: "mdi:thermometer-high",
   temperature_min: "mdi:thermometer-low",
-  humidity_max: "mdi:water-percent",
-  humidity_min: "mdi:water-percent-alert",
   wind_gust: "mdi:weather-windy-variant",
   rain_rate: "mdi:weather-pouring",
-  uv_index: "mdi:sun-wireless",
+  rain_daily: "mdi:weather-rainy",
+  solar_radiation: "mdi:white-balance-sunny",
 };
 
 /* ============================================================================
@@ -177,7 +176,9 @@ function drawChart(canvas, series, options = {}) {
   const textColor = styles.getPropertyValue("--secondary-text-color").trim() || "#888";
   const gridColor = styles.getPropertyValue("--divider-color").trim() || "#e0e0e0";
 
-  const padding = { top: 16, right: series.some((s) => s.axis === "right") ? 46 : 12, bottom: 22, left: 42 };
+  const padding = options.compact
+    ? { top: 4, right: 4, bottom: 4, left: 4 }
+    : { top: 16, right: series.some((s) => s.axis === "right") ? 46 : 12, bottom: 22, left: 42 };
   const plotW = width - padding.left - padding.right;
   const plotH = height - padding.top - padding.bottom;
 
@@ -237,37 +238,39 @@ function drawChart(canvas, series, options = {}) {
     return padding.top + plotH - ((v - r.min) / (r.max - r.min)) * plotH;
   }
 
-  // Grille horizontale + graduations axe gauche
-  ctx.strokeStyle = gridColor;
-  ctx.lineWidth = 1;
-  ctx.fillStyle = textColor;
-  ctx.font = "10px sans-serif";
-  const rows = 4;
-  for (let i = 0; i <= rows; i++) {
-    const yy = padding.top + (plotH / rows) * i;
-    ctx.beginPath();
-    ctx.moveTo(padding.left, yy);
-    ctx.lineTo(width - padding.right, yy);
-    ctx.globalAlpha = 0.5;
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    if (leftRange) {
-      const val = leftRange.max - ((leftRange.max - leftRange.min) / rows) * i;
-      ctx.textAlign = "right";
-      ctx.fillText(fmt(val, 0), padding.left - 6, yy + 3);
+  // Grille horizontale + graduations axe gauche (masquées en mode compact)
+  if (!options.compact) {
+    ctx.strokeStyle = gridColor;
+    ctx.lineWidth = 1;
+    ctx.fillStyle = textColor;
+    ctx.font = "10px sans-serif";
+    const rows = 4;
+    for (let i = 0; i <= rows; i++) {
+      const yy = padding.top + (plotH / rows) * i;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, yy);
+      ctx.lineTo(width - padding.right, yy);
+      ctx.globalAlpha = 0.5;
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (leftRange) {
+        const val = leftRange.max - ((leftRange.max - leftRange.min) / rows) * i;
+        ctx.textAlign = "right";
+        ctx.fillText(fmt(val, 0), padding.left - 6, yy + 3);
+      }
+      if (rightRange) {
+        const val = rightRange.max - ((rightRange.max - rightRange.min) / rows) * i;
+        ctx.textAlign = "left";
+        ctx.fillText(fmt(val, 0), width - padding.right + 6, yy + 3);
+      }
     }
-    if (rightRange) {
-      const val = rightRange.max - ((rightRange.max - rightRange.min) / rows) * i;
-      ctx.textAlign = "left";
-      ctx.fillText(fmt(val, 0), width - padding.right + 6, yy + 3);
-    }
-  }
 
-  // Axe temps (3 repères)
-  ctx.textAlign = "center";
-  for (let i = 0; i <= 2; i++) {
-    const t = tMin + (tSpan / 2) * i;
-    ctx.fillText(fmtDateShort(t), x(t), height - 6);
+    // Axe temps (3 repères)
+    ctx.textAlign = "center";
+    for (let i = 0; i <= 2; i++) {
+      const t = tMin + (tSpan / 2) * i;
+      ctx.fillText(fmtDateShort(t), x(t), height - 6);
+    }
   }
 
   // Tracé des séries
@@ -577,71 +580,8 @@ function drawWindRose(canvas, roseData, baseColor) {
 }
 
 /* ============================================================================
- * Mini-graphique (sparkline) pour la vue instantanée
+ * Carte principale
  * ==========================================================================*/
-
-function drawSparkline(canvas, points, color) {
-  const dpr = window.devicePixelRatio || 1;
-  const rect = canvas.getBoundingClientRect();
-  const width = Math.max(rect.width, 60);
-  const height = 40;
-
-  canvas.width = width * dpr;
-  canvas.height = height * dpr;
-  canvas.style.height = `${height}px`;
-
-  const ctx = canvas.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, width, height);
-
-  if (!points || points.length < 2) return;
-
-  const vals = points.map((p) => p.v);
-  let min = Math.min(...vals);
-  let max = Math.max(...vals);
-  if (min === max) {
-    min -= 1;
-    max += 1;
-  }
-  const pad = (max - min) * 0.15;
-  min -= pad;
-  max += pad;
-
-  const tMin = points[0].t;
-  const tMax = points[points.length - 1].t;
-  const tSpan = Math.max(tMax - tMin, 1);
-  const x = (t) => ((t - tMin) / tSpan) * width;
-  const y = (v) => height - ((v - min) / (max - min)) * height;
-
-  const grad = ctx.createLinearGradient(0, 0, 0, height);
-  grad.addColorStop(0, `${color}66`);
-  grad.addColorStop(1, `${color}00`);
-
-  ctx.beginPath();
-  points.forEach((p, i) => {
-    const px = x(p.t);
-    const py = y(p.v);
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  });
-  ctx.lineTo(width, height);
-  ctx.lineTo(0, height);
-  ctx.closePath();
-  ctx.fillStyle = grad;
-  ctx.fill();
-
-  ctx.beginPath();
-  points.forEach((p, i) => {
-    const px = x(p.t);
-    const py = y(p.v);
-    if (i === 0) ctx.moveTo(px, py);
-    else ctx.lineTo(px, py);
-  });
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 1.8;
-  ctx.lineJoin = "round";
-  ctx.stroke();
-}
 
 class EcowittWs90Card extends HTMLElement {
   static getConfigElement() {
@@ -711,6 +651,7 @@ class EcowittWs90Card extends HTMLElement {
     if (this._mode === "instant") {
       this._renderInstantValues();
       this._loadMiniGraphs();
+      this._loadTodayTempExtremes();
     }
     this._maybeLoadRecords();
   }
@@ -809,10 +750,44 @@ class EcowittWs90Card extends HTMLElement {
         .map((row) => ({ t: new Date(row.start).getTime(), v: row[f.agg] }))
         .filter((p) => p.v !== null && p.v !== undefined);
       if (points.length) this._miniGraphsLoadedFields.add(f.key);
-      requestAnimationFrame(() => drawSparkline(canvas, points, this._themeColor(THEME_COLOR)));
+      requestAnimationFrame(() =>
+        drawChart(canvas, [{ label: f.key, color: this._themeColor(THEME_COLOR), points }], { compact: true, height: 44 })
+      );
     });
 
     if (needsTH) this._drawTempHumidityChart(stats);
+  }
+
+  async _loadTodayTempExtremes() {
+    const e = this._config.entities;
+    if (!this._hass || !e.temperature || this._mode !== "instant") return;
+    const now = Date.now();
+    if (this._todayExtremesLastAttempt && now - this._todayExtremesLastAttempt < 60000) return;
+    this._todayExtremesLastAttempt = now;
+
+    const nowDate = new Date();
+    const startOfDay = new Date(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate(), 0, 0, 0);
+    const stats = await fetchStatistics(this._hass, [e.temperature], startOfDay.toISOString(), nowDate.toISOString(), "5minute");
+    const rows = stats[e.temperature] || [];
+
+    let maxRow = null;
+    let minRow = null;
+    rows.forEach((row) => {
+      if (row.max !== null && row.max !== undefined && (!maxRow || row.max > maxRow.max)) maxRow = row;
+      if (row.min !== null && row.min !== undefined && (!minRow || row.min < minRow.min)) minRow = row;
+    });
+
+    const el = this._root.getElementById("th-minmax");
+    if (!el) return;
+    if (!maxRow && !minRow) {
+      el.textContent = "";
+      return;
+    }
+    const fmtTime = (iso) => new Date(iso).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    const parts = [];
+    if (maxRow) parts.push(`<span class="arrow-max">↑</span> ${fmt(maxRow.max)}°C ${fmtTime(maxRow.start)}`);
+    if (minRow) parts.push(`<span class="arrow-min">↓</span> ${fmt(minRow.min)}°C ${fmtTime(minRow.start)}`);
+    el.innerHTML = parts.join("   ");
   }
 
   _drawTempHumidityChart(stats) {
@@ -897,7 +872,7 @@ class EcowittWs90Card extends HTMLElement {
       .custom-range-row .range-sep { color: var(--secondary-text-color); font-size: 0.8rem; }
       .apply-btn { border: none; background: var(--primary-color); color: var(--text-primary-color, #fff); border-radius: 6px; padding: 5px 12px; font-size: 0.8rem; cursor: pointer; }
       .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; margin-bottom: 14px; }
-      .stat { background: var(--secondary-background-color, rgba(127,127,127,0.08)); border: 1px solid var(--divider-color); border-radius: 10px; padding: 10px; text-align: center; box-sizing: border-box; }
+      .stat { border: 1px solid var(--divider-color); border-radius: 10px; padding: 10px; text-align: center; box-sizing: border-box; }
       .stat .value { font-size: 1.25rem; font-weight: 600; color: var(--primary-text-color); }
       .stat .label { font-size: 0.72rem; color: var(--secondary-text-color); text-transform: uppercase; letter-spacing: .03em; }
       .stat .sub { font-size: 0.72rem; color: var(--secondary-text-color); margin-top: 2px; }
@@ -922,6 +897,9 @@ class EcowittWs90Card extends HTMLElement {
       .th-value { display: flex; align-items: center; gap: 6px; }
       .th-value .th-icon { --mdc-icon-size: 22px; color: var(--secondary-text-color); opacity: 0.7; }
       .th-value .value { font-size: 1.7rem; font-weight: 600; color: var(--primary-text-color); }
+      .th-minmax { font-size: 0.95rem; color: var(--secondary-text-color); margin: -2px 0 8px; }
+      .th-minmax .arrow-max { color: var(--error-color, #F44336); font-weight: 600; }
+      .th-minmax .arrow-min { color: var(--info-color, #2196F3); font-weight: 600; }
       .th-canvas { height: 150px; }
       .wind-section { display: flex; align-items: center; gap: 16px; border: 1px solid var(--divider-color); border-radius: 10px; padding: 12px; box-sizing: border-box; margin-bottom: 18px; flex-wrap: wrap; }
       .compass-canvas-lg { width: 110px !important; height: 110px; flex-shrink: 0; }
@@ -935,7 +913,7 @@ class EcowittWs90Card extends HTMLElement {
       .windrose-canvas { width: 100%; max-width: 280px; }
       .windrose-legend { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; font-size: 0.72rem; color: var(--secondary-text-color); margin-top: 6px; }
       .records-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
-      .record { background: var(--secondary-background-color, rgba(127,127,127,0.08)); border: 1px solid var(--divider-color); border-radius: 10px; padding: 8px 10px; box-sizing: border-box; }
+      .record { border: 1px solid var(--divider-color); border-radius: 10px; padding: 8px 10px; box-sizing: border-box; }
       .record-top { display: flex; align-items: flex-start; justify-content: space-between; }
       .record-icon { --mdc-icon-size: 18px; opacity: 0.75; }
       .record .label { font-size: 0.72rem; color: var(--secondary-text-color); }
@@ -963,6 +941,8 @@ class EcowittWs90Card extends HTMLElement {
       this._miniGraphsLoadedFields.clear();
       this._miniGraphsLastAttempt = 0;
       this._loadMiniGraphs();
+      this._todayExtremesLastAttempt = 0;
+      this._loadTodayTempExtremes();
       this._startMiniGraphRefresh();
     } else {
       this._stopMiniGraphRefresh();
@@ -1073,8 +1053,8 @@ class EcowittWs90Card extends HTMLElement {
     return `
       ${hasTH ? this._tempHumiditySection() : ""}
       ${hasWind ? this._windSection() : ""}
-      ${hasSun ? `<div class="section-title">Luminosité &amp; UV</div><div class="grid">
-        ${e.solar_radiation ? statWithGraph("solar_radiation", "Luminosité") : ""}
+      ${hasSun ? `<div class="section-title">Radiation solaire &amp; UV</div><div class="grid">
+        ${e.solar_radiation ? statWithGraph("solar_radiation", "Radiation solaire") : ""}
         ${e.uv_index ? statWithGraph("uv_index", "Index UV") : ""}
       </div>` : ""}
       ${hasRain ? `<div class="section-title">Pluie</div><div class="grid">
@@ -1094,6 +1074,7 @@ class EcowittWs90Card extends HTMLElement {
           ${e.temperature ? `<div class="th-value" id="s-temperature"><ha-icon icon="mdi:thermometer" class="th-icon"></ha-icon><span class="value">--</span></div>` : ""}
           ${e.humidity ? `<div class="th-value" id="s-humidity"><ha-icon icon="mdi:water-percent" class="th-icon"></ha-icon><span class="value">--</span></div>` : ""}
         </div>
+        ${e.temperature ? `<div class="th-minmax" id="th-minmax"></div>` : ""}
         <div class="chart-legend" id="legend-th"></div>
         <canvas id="chart-th-instant" class="th-canvas"></canvas>
       </div>
@@ -1133,8 +1114,8 @@ class EcowittWs90Card extends HTMLElement {
       ${e.humidity ? this._chartBlock("humidity", "Humidité", "%") : ""}
       ${e.wind_speed || e.wind_gust ? this._chartBlock("wind", "Vent (vitesse & rafales)", "km/h") : ""}
       ${e.wind_direction && e.wind_speed ? this._windRoseBlock() : ""}
-      ${e.rain_rate || e.rain_daily ? this._chartBlock("rain", "Pluie", "mm") : ""}
-      ${e.solar_radiation || e.uv_index ? this._chartBlock("sun", "Luminosité & Index UV", "") : ""}
+      ${e.rain_daily ? this._chartBlock("rain", "Pluie", "mm") : ""}
+      ${e.solar_radiation || e.uv_index ? this._chartBlock("sun", "Radiation solaire & Index UV", "") : ""}
       ${e.pressure ? this._chartBlock("pressure", "Pression atmosphérique", "hPa") : ""}
     `;
   }
@@ -1216,13 +1197,12 @@ class EcowittWs90Card extends HTMLElement {
 
     const e = this._config.entities;
     const recordSpecs = [
-      { key: "temperature", entity: e.temperature, label: "Température max", agg: "max", unit: "°C", icon: RECORD_ICONS.temperature_max },
-      { key: "temperature", entity: e.temperature, label: "Température min", agg: "min", unit: "°C", icon: RECORD_ICONS.temperature_min },
-      { key: "humidity", entity: e.humidity, label: "Humidité max", agg: "max", unit: "%", icon: RECORD_ICONS.humidity_max },
-      { key: "humidity", entity: e.humidity, label: "Humidité min", agg: "min", unit: "%", icon: RECORD_ICONS.humidity_min },
-      { key: "wind_gust", entity: e.wind_gust, label: "Rafale max", agg: "max", unit: "km/h", icon: RECORD_ICONS.wind_gust },
-      { key: "rain_rate", entity: e.rain_rate, label: "Intensité pluie max", agg: "max", unit: "mm/h", icon: RECORD_ICONS.rain_rate },
-      { key: "uv_index", entity: e.uv_index, label: "Index UV max", agg: "max", unit: "", icon: RECORD_ICONS.uv_index },
+      { key: "temperature", entity: e.temperature, label: "Température max", aggs: ["max"], best: "max", unit: "°C", icon: RECORD_ICONS.temperature_max },
+      { key: "temperature", entity: e.temperature, label: "Température min", aggs: ["min"], best: "min", unit: "°C", icon: RECORD_ICONS.temperature_min },
+      { key: "wind_gust", entity: e.wind_gust, label: "Rafale max", aggs: ["max"], best: "max", unit: "km/h", icon: RECORD_ICONS.wind_gust },
+      { key: "rain_rate", entity: e.rain_rate, label: "Intensité pluie max", aggs: ["max", "mean", "sum"], best: "max", unit: "mm/h", icon: RECORD_ICONS.rain_rate },
+      { key: "solar_radiation", entity: e.solar_radiation, label: "Radiation solaire max", aggs: ["max", "mean"], best: "max", unit: "W/m²", icon: RECORD_ICONS.solar_radiation },
+      { key: "rain_daily", entity: e.rain_daily, label: "Cumul journalier max", aggs: ["max", "sum", "mean", "state"], best: "max", unit: "mm", icon: RECORD_ICONS.rain_daily },
     ].filter((r) => r.entity);
 
     const ids = [...new Set(recordSpecs.map((r) => r.entity))];
@@ -1230,21 +1210,31 @@ class EcowittWs90Card extends HTMLElement {
     const end = new Date().toISOString();
     const stats = await fetchStatistics(this._hass, ids, start, end, "day");
 
+    // Repli sur plusieurs champs par ligne : certains capteurs cumulatifs
+    // qui se remettent à zéro (ex. pluie du jour, state_class "total")
+    // n'ont QUE la statistique "sum" de calculée par Home Assistant, pas
+    // de "max"/"mean"/"min" — sans ce repli, ces records resteraient
+    // toujours vides.
+    const pickValue = (row, aggs) => {
+      for (const agg of aggs) {
+        if (row[agg] !== null && row[agg] !== undefined) return row[agg];
+      }
+      return undefined;
+    };
+
     const records = recordSpecs.map((r) => {
       const rows = stats[r.entity] || [];
-      if (!rows.length) return { ...r, value: null, date: null };
-      let best = rows[0];
+      let bestRow = null;
+      let bestVal;
       rows.forEach((row) => {
-        const bestVal = best[r.agg];
-        const rowVal = row[r.agg];
-        if (rowVal === null || rowVal === undefined) return;
-        if (bestVal === null || bestVal === undefined) {
-          best = row;
-        } else if (r.agg === "max" ? rowVal > bestVal : rowVal < bestVal) {
-          best = row;
+        const v = pickValue(row, r.aggs);
+        if (v === undefined) return;
+        if (bestRow === null || (r.best === "max" ? v > bestVal : v < bestVal)) {
+          bestRow = row;
+          bestVal = v;
         }
       });
-      return { ...r, value: best[r.agg], date: best.start };
+      return { ...r, value: bestRow ? bestVal : null, date: bestRow ? bestRow.start : null };
     });
 
     this._records = records;
@@ -1409,28 +1399,14 @@ class EcowittWs90Card extends HTMLElement {
         requestAnimationFrame(() => drawWindRose(roseCanvas, roseData, baseColor));
       }
     }
-    if (e.rain_rate || e.rain_daily) {
-      const s = [];
-      if (e.rain_daily) {
-        const cumulative = seriesForAny(e.rain_daily, ["max", "sum", "mean", "state"]);
-        s.push({ label: "Pluie horaire", color: baseColor, points: buildHourlyDeltaBars(cumulative), type: "bar", unit: " mm" });
-      }
-      if (e.rain_rate) {
-        s.push({
-          label: "Intensité",
-          color: baseColor,
-          opacity: e.rain_daily ? 0.6 : 1,
-          points: seriesForAny(e.rain_rate, ["max", "mean", "sum"]),
-          unit: " mm/h",
-          axis: e.rain_daily ? "right" : "left",
-          extremes: extremesForAny(e.rain_rate, ["max"], ["min"]),
-        });
-      }
-      this._drawWithLegend("rain", s, { annotateExtremes: true, zeroBaseline: true });
+    if (e.rain_daily) {
+      const cumulative = seriesForAny(e.rain_daily, ["max", "sum", "mean", "state"]);
+      const s = [{ label: "Pluie horaire", color: baseColor, points: buildHourlyDeltaBars(cumulative), type: "bar", unit: " mm" }];
+      this._drawWithLegend("rain", s, { annotateExtremes: false, zeroBaseline: true });
     }
     if (e.solar_radiation || e.uv_index) {
       const s = [];
-      if (e.solar_radiation) s.push({ label: "Luminosité", color: baseColor, points: seriesFor(e.solar_radiation), unit: " W/m²", axis: "left", extremes: extremesFor(e.solar_radiation) });
+      if (e.solar_radiation) s.push({ label: "Radiation solaire", color: baseColor, points: seriesFor(e.solar_radiation), unit: " W/m²", axis: "left", extremes: extremesFor(e.solar_radiation) });
       if (e.uv_index) s.push({ label: "UV", color: baseColor, opacity: 0.5, points: seriesFor(e.uv_index, "max"), unit: "", axis: e.solar_radiation ? "right" : "left", extremes: extremesFor(e.uv_index) });
       this._drawWithLegend("sun", s, { annotateExtremes: true });
     }
@@ -1516,7 +1492,7 @@ class EcowittWs90CardEditor extends HTMLElement {
       </div>
       <div class="row checkbox-row">
         <input type="checkbox" id="show_mini_graphs" ${c.show_mini_graphs ? "checked" : ""} />
-        <label style="margin:0">Afficher des mini-graphiques sous température / humidité / vent / rafales (vue instantanée)</label>
+        <label style="margin:0">Afficher le graphe température/humidité et les mini-graphiques radiation solaire/UV/pression (vue instantanée)</label>
       </div>
       <div class="row" id="mini_graph_period_row" style="${c.show_mini_graphs ? "" : "display:none"}">
         <label>Durée des mini-graphiques</label>
