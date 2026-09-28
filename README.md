@@ -105,6 +105,7 @@ entities:
   wind_direction: sensor.wind_direction
   rain_rate: sensor.rain_rate
   rain_daily: sensor.daily_rain
+  rain_24h: sensor.rain_24h
   solar_radiation: sensor.solar_radiation
   uv_index: sensor.uv_index
   pressure: sensor.pressure
@@ -137,7 +138,8 @@ automatiquement.
 | `wind_gust` | Rafales | km/h |
 | `wind_direction` | Direction du vent (0-360°) | ° |
 | `rain_rate` | Intensité de pluie instantanée | mm/h |
-| `rain_daily` | Cumul de pluie du jour | mm |
+| `rain_daily` | Cumul de pluie du jour (compteur qui repart à 0 chaque jour) | mm |
+| `rain_24h` | Pluie cumulée sur les dernières 24 h (fenêtre glissante) | mm |
 | `solar_radiation` | Radiation solaire | W/m² |
 | `uv_index` | Index UV | — |
 | `pressure` | Pression atmosphérique | hPa |
@@ -176,7 +178,7 @@ fonctionner pour cette donnée (voir [Dépannage](#dépannage)).
 - **Vent** : une boussole (aiguille pointant vers la direction vers
   laquelle souffle le vent) accompagnée de la vitesse, la direction et la
   rafale en direct.
-- **Radiation solaire & UV**, **Pluie**, **Pression** : tuiles avec valeur
+- **Radiation solaire & UV**, **Pluie** (intensité, cumul du jour, pluie sur 24 h), **Pression** : tuiles avec valeur
   actuelle et, pour radiation solaire/UV/pression, un mini-graphique de
   tendance en option.
 - **Records de la station** : température max/min, rafale max, intensité
@@ -185,10 +187,20 @@ fonctionner pour cette donnée (voir [Dépannage](#dépannage)).
   ne sont volontairement pas dans cette liste (records peu pertinents pour
   ces valeurs).
 
-Dans la vue Historique, le graphique Pluie affiche uniquement la
-**quantité tombée par heure** (barres), calculée à partir des cumuls
-successifs du capteur `rain_daily`, avec une gestion propre du passage à
-minuit (pas de valeur négative).
+Dans la vue Historique, le graphique Pluie combine deux capteurs :
+
+- des **barres** de pluie tombée par heure (par jour au-delà de 7 jours),
+  calculées à partir des variations successives du capteur `rain_daily`.
+  La première valeur de la période sert de point de départ, et la carte
+  remonte d'un jour avant le début pour ne pas perdre la pluie de la
+  première heure ;
+- une **courbe « Cumul 24 h glissant »** issue du capteur `rain_24h`, qui
+  donne le total réel des 24 dernières heures.
+
+`rain_24h` ne sert jamais au calcul des barres : c'est une fenêtre glissante
+dont la valeur redescend quand la pluie sort de la fenêtre, ce qui serait
+interprété à tort comme une remise à zéro. Chacun des deux capteurs est
+optionnel.
 
 ## Personnalisation de la couleur
 
