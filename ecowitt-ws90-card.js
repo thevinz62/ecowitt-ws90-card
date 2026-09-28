@@ -42,6 +42,7 @@ const ENTITY_FIELDS = [
   { key: "wind_direction", label: "Direction du vent", unit: "°" },
   { key: "rain_rate", label: "Intensité de pluie", unit: "mm/h" },
   { key: "rain_daily", label: "Cumul de pluie (jour)", unit: "mm" },
+  { key: "rain_24h", label: "Pluie sur 24 h (glissant)", unit: "mm" },
   { key: "solar_radiation", label: "Radiation solaire", unit: "W/m²" },
   { key: "uv_index", label: "Index UV", unit: "" },
   { key: "pressure", label: "Pression atmosphérique", unit: "hPa" },
@@ -259,6 +260,8 @@ function drawChart(canvas, series, options = {}) {
     relevant.forEach((s) => {
       if (s.extremes?.max) pts.push(s.extremes.max.v);
       if (s.extremes?.min) pts.push(s.extremes.min.v);
+      if (s.band?.max) s.band.max.forEach((p) => pts.push(p.v));
+      if (s.band?.min) s.band.min.forEach((p) => pts.push(p.v));
     });
     if (!pts.length) return null;
     let min = Math.min(...pts);
@@ -268,8 +271,7 @@ function drawChart(canvas, series, options = {}) {
     // ou nulles, la ligne de base doit être exactement 0 — sinon la marge
     // habituelle sous le minimum fait apparaître un petit reliquat de
     // barre même pour une valeur nulle.
-    const allBars = relevant.length > 0 && relevant.every((s) => s.type === "bar");
-    if (options.zeroBaseline && allBars && min >= 0) {
+    if (options.zeroBaseline && min >= 0) {
       min = 0;
       max = max > 0 ? max : 1;
       return { min: 0, max: max * 1.12 };
@@ -328,6 +330,50 @@ function drawChart(canvas, series, options = {}) {
       ctx.fillText(fmtDateShort(t), x(t), height - 6);
     }
   }
+
+  // Bandes min/max : dessinées en premier (arrière-plan), pour que le vrai
+  // pic/creux soit visible en continu sur toute la période, pas seulement
+  // ponctuellement — évite qu'un badge de valeur réelle semble "flotter"
+  // loin de la courbe lissée sur une longue période.
+  validSeries.forEach((s) => {
+    if (!s.band || !s.band.max?.length || !s.band.min?.length) return;
+    const axis = s.axis || "left";
+    const baseOpacity = s.opacity ?? 1;
+
+    ctx.beginPath();
+    s.band.max.forEach((p, i) => {
+      const px = x(p.t);
+      const py = y(p.v, axis);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    for (let i = s.band.min.length - 1; i >= 0; i--) {
+      const p = s.band.min[i];
+      ctx.lineTo(x(p.t), y(p.v, axis));
+    }
+    ctx.closePath();
+    ctx.fillStyle = s.color;
+    ctx.globalAlpha = baseOpacity * 0.32;
+    ctx.fill();
+
+    // Contours fins sur les bords haut/bas de la bande pour bien marquer
+    // l'enveloppe min/max, sans rivaliser visuellement avec la courbe
+    // moyenne au centre.
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = s.color;
+    ctx.globalAlpha = baseOpacity * 0.55;
+    [s.band.max, s.band.min].forEach((edge) => {
+      ctx.beginPath();
+      edge.forEach((p, i) => {
+        const px = x(p.t);
+        const py = y(p.v, axis);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.stroke();
+    });
+    ctx.globalAlpha = 1;
+  });
 
   // Tracé des séries
   validSeries.forEach((s) => {
@@ -492,31 +538,37 @@ function drawCompass(canvas, degrees, size = 90) {
 /**
  * Convertit une série cumulative qui se remet à zéro périodiquement (ex.
  * pluie du jour, compteur "total" qui repart à 0 à minuit) en barres de
- * quantité tombée PAR HEURE : différence entre valeurs cumulées
+ * quantité tombée par intervalle : différence entre valeurs cumulées
  * successives, avec repli sur la valeur brute quand une remise à zéro est
- * détectée (différence négative), puis regroupement par heure calendaire
- * (indépendamment de la granularité des points fournis en entrée).
+ * détectée (différence négative), puis regroupement par heure OU par jour
+ * calendaire selon `bucket` (indépendamment de la granularité des points
+ * fournis en entrée).
  */
-function buildHourlyDeltaBars(cumulativePoints) {
+function buildDeltaBars(cumulativePoints, bucket = "hour") {
   if (!cumulativePoints.length) return [];
   const sorted = [...cumulativePoints].sort((a, b) => a.t - b.t);
 
   const deltas = sorted.map((p, i) => {
-    const prev = i > 0 ? sorted[i - 1].v : 0;
+    // La toute première valeur sert de simple point de départ : pour un
+    // compteur cumulatif, elle peut contenir tout le cumul historique du
+    // capteur (statistique "sum" depuis sa mise en service), qu'il ne faut
+    // surtout pas attribuer à la première heure de la période.
+    const prev = i > 0 ? sorted[i - 1].v : p.v;
     let d = p.v - prev;
     if (d < 0) d = p.v; // remise à zéro détectée entre ce point et le précédent
     return { t: p.t, v: Math.max(d, 0) };
   });
 
-  const byHour = new Map();
+  const byBucket = new Map();
   deltas.forEach((p) => {
-    const hourStart = new Date(p.t);
-    hourStart.setMinutes(0, 0, 0);
-    const key = hourStart.getTime();
-    byHour.set(key, (byHour.get(key) || 0) + p.v);
+    const bucketStart = new Date(p.t);
+    if (bucket === "day") bucketStart.setHours(0, 0, 0, 0);
+    else bucketStart.setMinutes(0, 0, 0);
+    const key = bucketStart.getTime();
+    byBucket.set(key, (byBucket.get(key) || 0) + p.v);
   });
 
-  return [...byHour.entries()].sort((a, b) => a[0] - b[0]).map(([t, v]) => ({ t, v }));
+  return [...byBucket.entries()].sort((a, b) => a[0] - b[0]).map(([t, v]) => ({ t, v }));
 }
 
 /**
@@ -679,6 +731,7 @@ class EcowittWs90Card extends HTMLElement {
         wind_direction: "",
         rain_rate: "",
         rain_daily: "",
+        rain_24h: "",
         solar_radiation: "",
         uv_index: "",
         pressure: "",
@@ -1128,7 +1181,7 @@ class EcowittWs90Card extends HTMLElement {
     const hasTH = e.temperature || e.humidity;
     const hasWind = e.wind_speed || e.wind_gust || e.wind_direction;
     const hasSun = e.solar_radiation || e.uv_index;
-    const hasRain = e.rain_rate || e.rain_daily;
+    const hasRain = e.rain_rate || e.rain_daily || e.rain_24h;
 
     return `
       ${hasTH ? this._tempHumiditySection() : ""}
@@ -1140,6 +1193,7 @@ class EcowittWs90Card extends HTMLElement {
       ${hasRain ? `<div class="section-title">Pluie</div><div class="grid">
         ${e.rain_rate ? `<div class="stat" id="s-rain_rate"><div class="label">Intensité</div><div class="value">--</div></div>` : ""}
         ${e.rain_daily ? `<div class="stat" id="s-rain_daily"><div class="label">Cumul du jour</div><div class="value">--</div></div>` : ""}
+        ${e.rain_24h ? `<div class="stat" id="s-rain_24h"><div class="label">Pluie sur 24 h</div><div class="value">--</div></div>` : ""}
       </div>` : ""}
       ${e.pressure ? `<div class="section-title">Pression</div><div class="grid">${statWithGraph("pressure", "Pression")}</div>` : ""}
       ${this._config.show_records ? `<div class="section-title">Records de la station</div><div class="records-grid" id="records-container"><div class="empty">Chargement…</div></div>` : ""}
@@ -1194,7 +1248,7 @@ class EcowittWs90Card extends HTMLElement {
       ${e.humidity ? this._chartBlock("humidity", "Humidité", "%") : ""}
       ${e.wind_speed || e.wind_gust ? this._chartBlock("wind", "Vent (vitesse & rafales)", "km/h") : ""}
       ${e.wind_direction && e.wind_speed ? this._windRoseBlock() : ""}
-      ${e.rain_daily ? this._chartBlock("rain", "Pluie", "mm") : ""}
+      ${e.rain_daily || e.rain_24h ? this._chartBlock("rain", "Pluie", "mm") : ""}
       ${e.solar_radiation || e.uv_index ? this._chartBlock("sun", "Radiation solaire & Index UV", "") : ""}
       ${e.pressure ? this._chartBlock("pressure", "Pression atmosphérique", "hPa") : ""}
     `;
@@ -1252,6 +1306,7 @@ class EcowittWs90Card extends HTMLElement {
     }
     if (e.rain_rate) set("rain_rate", `${fmt(this._stateNum(e.rain_rate))} mm/h`);
     if (e.rain_daily) set("rain_daily", `${fmt(this._stateNum(e.rain_daily))} mm`);
+    if (e.rain_24h) set("rain_24h", `${fmt(this._stateNum(e.rain_24h))} mm`);
     if (e.solar_radiation) set("solar_radiation", `${fmt(this._stateNum(e.solar_radiation), 0)} W/m²`);
     if (e.uv_index) set("uv_index", `${fmt(this._stateNum(e.uv_index), 1)}`);
     if (e.pressure) set("pressure", `${fmt(this._stateNum(e.pressure), 1)} hPa`);
@@ -1282,7 +1337,7 @@ class EcowittWs90Card extends HTMLElement {
       { key: "wind_gust", entity: e.wind_gust, label: "Rafale max", aggs: ["max"], best: "max", unit: "km/h", icon: RECORD_ICONS.wind_gust },
       { key: "rain_rate", entity: e.rain_rate, label: "Intensité pluie max", aggs: ["max", "mean", "sum"], best: "max", unit: "mm/h", icon: RECORD_ICONS.rain_rate },
       { key: "solar_radiation", entity: e.solar_radiation, label: "Radiation solaire max", aggs: ["max", "mean"], best: "max", unit: "W/m²", icon: RECORD_ICONS.solar_radiation },
-      { key: "rain_daily", entity: e.rain_daily, label: "Cumul journalier max", aggs: ["max", "sum", "mean", "state"], best: "max", unit: "mm", icon: RECORD_ICONS.rain_daily },
+      { key: "rain_daily", entity: e.rain_daily, label: "Cumul journalier max", daily: true, aggs: ["max", "sum", "mean", "state"], best: "max", unit: "mm", icon: RECORD_ICONS.rain_daily },
     ].filter((r) => r.entity);
 
     const ids = [...new Set(recordSpecs.map((r) => r.entity))];
@@ -1302,12 +1357,26 @@ class EcowittWs90Card extends HTMLElement {
       return undefined;
     };
 
+    // Pour un capteur cumulatif (statistique "sum" seule, sans "max"), la
+    // valeur d'un jour est la différence entre les sum de deux jours
+    // consécutifs — pas le sum lui-même, qui est un cumul depuis la mise en
+    // service du capteur.
+    const dailyValue = (rows, i) => {
+      const row = rows[i];
+      if (row.max !== null && row.max !== undefined) return row.max;
+      if (row.sum === null || row.sum === undefined || i === 0) return undefined;
+      const prev = rows[i - 1].sum;
+      if (prev === null || prev === undefined) return undefined;
+      const d = row.sum - prev;
+      return d < 0 ? row.sum : d;
+    };
+
     const records = recordSpecs.map((r) => {
-      const rows = stats[r.entity] || [];
+      const rows = (stats[r.entity] || []).slice().sort((a, b) => new Date(a.start) - new Date(b.start));
       let bestRow = null;
       let bestVal;
-      rows.forEach((row) => {
-        const v = pickValue(row, r.aggs);
+      rows.forEach((row, idx) => {
+        const v = r.daily ? dailyValue(rows, idx) : pickValue(row, r.aggs);
         if (v === undefined) return;
         if (bestRow === null || (r.best === "max" ? v > bestVal : v < bestVal)) {
           bestRow = row;
@@ -1452,21 +1521,30 @@ class EcowittWs90Card extends HTMLElement {
       };
     };
 
+    // Bande min/max continue le long de la période : montre la vraie
+    // amplitude à chaque instant, pas seulement au point le plus extrême —
+    // évite qu'un badge de pic réel semble "flotter" loin de la courbe
+    // lissée sur les longues périodes (ex. 1 an).
+    const bandFor = (entityId) => ({
+      max: seriesFor(entityId, "max"),
+      min: seriesFor(entityId, "min"),
+    });
+
     const baseColor = this._themeColor(THEME_COLOR);
 
     if (e.temperature) {
       this._drawWithLegend("temperature", [
-        { label: "Température", color: baseColor, points: seriesFor(e.temperature), unit: "°C", extremes: extremesFor(e.temperature) },
+        { label: "Température", color: baseColor, points: seriesFor(e.temperature), unit: "°C", extremes: extremesFor(e.temperature), band: bandFor(e.temperature) },
       ], { annotateExtremes: true });
     }
     if (e.humidity) {
       this._drawWithLegend("humidity", [
-        { label: "Humidité", color: baseColor, points: seriesFor(e.humidity), unit: "%", extremes: extremesFor(e.humidity) },
+        { label: "Humidité", color: baseColor, points: seriesFor(e.humidity), unit: "%", extremes: extremesFor(e.humidity), band: bandFor(e.humidity) },
       ], { annotateExtremes: true });
     }
     if (e.wind_speed || e.wind_gust) {
       const s = [];
-      if (e.wind_speed) s.push({ label: "Vitesse", color: baseColor, points: seriesFor(e.wind_speed), unit: " km/h", extremes: extremesFor(e.wind_speed) });
+      if (e.wind_speed) s.push({ label: "Vitesse", color: baseColor, points: seriesFor(e.wind_speed), unit: " km/h", extremes: extremesFor(e.wind_speed), band: bandFor(e.wind_speed) });
       if (e.wind_gust) s.push({ label: "Rafales", color: baseColor, opacity: 0.5, points: seriesFor(e.wind_gust, "max"), unit: " km/h", extremes: extremesFor(e.wind_gust) });
       this._drawWithLegend("wind", s, { annotateExtremes: true });
     }
@@ -1522,20 +1600,56 @@ class EcowittWs90Card extends HTMLElement {
         })();
       }
     }
-    if (e.rain_daily) {
-      const cumulative = seriesForAny(e.rain_daily, ["max", "sum", "mean", "state"]);
-      const s = [{ label: "Pluie horaire", color: baseColor, points: buildHourlyDeltaBars(cumulative), type: "bar", unit: " mm" }];
-      this._drawWithLegend("rain", s, { annotateExtremes: false, zeroBaseline: true });
+    if (e.rain_daily || e.rain_24h) {
+      const spanMs = end - start;
+      const rainBucket = spanMs > 7 * 24 * 3600 * 1000 ? "day" : "hour";
+      const rainLabel = rainBucket === "day" ? "Pluie journalière" : "Pluie horaire";
+      (async () => {
+        const rainSeries = [];
+
+        if (e.rain_daily) {
+          // On remonte d'un jour avant le début de la période pour disposer
+          // d'une valeur de départ : sans elle, la pluie tombée dans la
+          // première heure/journée affichée serait perdue.
+          const extStart = new Date(start.getTime() - 24 * 3600 * 1000);
+          const ext = await fetchStatistics(this._hass, [e.rain_daily], extStart.toISOString(), end.toISOString(), statPeriod);
+          const cumulative = (ext[e.rain_daily] || [])
+            .map((row) => {
+              for (const agg of ["max", "sum", "mean", "state"]) {
+                if (row[agg] !== null && row[agg] !== undefined) return { t: new Date(row.start).getTime(), v: row[agg] };
+              }
+              return null;
+            })
+            .filter(Boolean);
+          const bucketStart = new Date(start);
+          if (rainBucket === "day") bucketStart.setHours(0, 0, 0, 0);
+          else bucketStart.setMinutes(0, 0, 0);
+          const bars = buildDeltaBars(cumulative, rainBucket).filter((b) => b.t >= bucketStart.getTime());
+          rainSeries.push({ label: rainLabel, color: baseColor, points: bars, type: "bar", unit: " mm" });
+        }
+
+        if (e.rain_24h) {
+          rainSeries.push({
+            label: "Cumul 24 h glissant",
+            color: baseColor,
+            opacity: e.rain_daily ? 0.7 : 1,
+            points: seriesForAny(e.rain_24h, ["max", "mean", "state"]),
+            unit: " mm",
+          });
+        }
+
+        this._drawWithLegend("rain", rainSeries, { annotateExtremes: false, zeroBaseline: true });
+      })();
     }
     if (e.solar_radiation || e.uv_index) {
       const s = [];
-      if (e.solar_radiation) s.push({ label: "Radiation solaire", color: baseColor, points: seriesFor(e.solar_radiation), unit: " W/m²", axis: "left", extremes: extremesFor(e.solar_radiation) });
+      if (e.solar_radiation) s.push({ label: "Radiation solaire", color: baseColor, points: seriesFor(e.solar_radiation), unit: " W/m²", axis: "left", extremes: extremesFor(e.solar_radiation), band: bandFor(e.solar_radiation) });
       if (e.uv_index) s.push({ label: "UV", color: baseColor, opacity: 0.5, points: seriesFor(e.uv_index, "max"), unit: "", axis: e.solar_radiation ? "right" : "left", extremes: extremesFor(e.uv_index) });
       this._drawWithLegend("sun", s, { annotateExtremes: true });
     }
     if (e.pressure) {
       this._drawWithLegend("pressure", [
-        { label: "Pression", color: baseColor, points: seriesFor(e.pressure), unit: " hPa", extremes: extremesFor(e.pressure) },
+        { label: "Pression", color: baseColor, points: seriesFor(e.pressure), unit: " hPa", extremes: extremesFor(e.pressure), band: bandFor(e.pressure) },
       ], { annotateExtremes: true });
     }
   }
