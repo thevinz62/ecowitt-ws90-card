@@ -46,6 +46,8 @@ const ENTITY_FIELDS = [
   { key: "solar_radiation", label: "Radiation solaire", unit: "W/m²" },
   { key: "uv_index", label: "Index UV", unit: "" },
   { key: "pressure", label: "Pression atmosphérique", unit: "hPa" },
+  { key: "weather", label: "Entité météo (icône de la météo actuelle)", unit: "" },
+  { key: "sun", label: "Entité soleil (par défaut sun.sun)", unit: "" },
 ];
 
 // Couleur unique des graphiques : reprend la couleur principale du thème HA
@@ -85,6 +87,25 @@ const MINI_GRAPH_FIELDS = [
 ];
 
 // Icônes utilisées dans le panneau "Records de la station"
+// États standard d'une entité weather Home Assistant -> icône + libellé
+const WEATHER_ICONS = {
+  sunny: { icon: "mdi:weather-sunny", label: "Ensoleillé" },
+  "clear-night": { icon: "mdi:weather-night", label: "Nuit claire" },
+  partlycloudy: { icon: "mdi:weather-partly-cloudy", label: "Éclaircies" },
+  cloudy: { icon: "mdi:weather-cloudy", label: "Nuageux" },
+  fog: { icon: "mdi:weather-fog", label: "Brouillard" },
+  rainy: { icon: "mdi:weather-rainy", label: "Pluie" },
+  pouring: { icon: "mdi:weather-pouring", label: "Fortes pluies" },
+  lightning: { icon: "mdi:weather-lightning", label: "Orage" },
+  "lightning-rainy": { icon: "mdi:weather-lightning-rainy", label: "Orage et pluie" },
+  hail: { icon: "mdi:weather-hail", label: "Grêle" },
+  snowy: { icon: "mdi:weather-snowy", label: "Neige" },
+  "snowy-rainy": { icon: "mdi:weather-snowy-rainy", label: "Neige et pluie" },
+  windy: { icon: "mdi:weather-windy", label: "Venteux" },
+  "windy-variant": { icon: "mdi:weather-windy-variant", label: "Nuageux et venteux" },
+  exceptional: { icon: "mdi:alert-circle-outline", label: "Conditions exceptionnelles" },
+};
+
 const RECORD_ICONS = {
   temperature_max: "mdi:thermometer-high",
   temperature_min: "mdi:thermometer-low",
@@ -716,12 +737,15 @@ class EcowittWs90Card extends HTMLElement {
         solar_radiation: "",
         uv_index: "",
         pressure: "",
+        weather: "",
+        sun: "",
       },
       default_mode: "instant",
       default_period: "24h",
       show_records: true,
       show_mini_graphs: true,
       mini_graph_period: "24h",
+      show_sun_bar: true,
     };
   }
 
@@ -736,6 +760,7 @@ class EcowittWs90Card extends HTMLElement {
       show_records: true,
       show_mini_graphs: true,
       mini_graph_period: "24h",
+      show_sun_bar: true,
       ...config,
       entities: { ...config.entities },
     };
@@ -1013,6 +1038,16 @@ class EcowittWs90Card extends HTMLElement {
       .th-value { display: flex; align-items: center; gap: 6px; }
       .th-value .th-icon { --mdc-icon-size: 22px; color: var(--secondary-text-color); opacity: 0.7; }
       .th-value .value { font-size: 1.7rem; font-weight: 600; color: var(--primary-text-color); }
+      .th-weather { display: flex; align-items: center; }
+      .th-weather ha-icon { --mdc-icon-size: 44px; color: var(--ecowitt-color); }
+      .sun-bar { border: 1px solid var(--divider-color); border-radius: 10px; padding: 12px; box-sizing: border-box; margin-bottom: 18px; }
+      .sun-row { display: flex; align-items: center; gap: 12px; }
+      .sun-end { display: flex; align-items: center; gap: 6px; font-size: 0.95rem; color: var(--primary-text-color); flex-shrink: 0; }
+      .sun-end ha-icon { --mdc-icon-size: 22px; color: var(--ecowitt-color); }
+      .sun-track { position: relative; flex: 1; height: 4px; border-radius: 2px; background: var(--divider-color); }
+      .sun-progress { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 2px; background: var(--ecowitt-color); opacity: 0.45; }
+      .sun-marker { position: absolute; top: 50%; width: 14px; height: 14px; border-radius: 50%; background: var(--ecowitt-color); transform: translate(-50%, -50%); }
+      .sun-label { text-align: center; font-size: 0.8rem; color: var(--secondary-text-color); margin-top: 8px; }
       .th-minmax { font-size: 0.95rem; color: var(--secondary-text-color); margin: -2px 0 8px; }
       .th-minmax .arrow-max { color: var(--error-color, #F44336); font-weight: 600; }
       .th-minmax .arrow-min { color: var(--info-color, #2196F3); font-weight: 600; }
@@ -1161,13 +1196,14 @@ class EcowittWs90Card extends HTMLElement {
         </div>`;
     };
 
-    const hasTH = e.temperature || e.humidity;
+    const hasTH = e.temperature || e.humidity || e.weather;
     const hasWind = e.wind_speed || e.wind_gust || e.wind_direction;
     const hasSun = e.solar_radiation || e.uv_index;
     const hasRain = e.rain_rate || e.rain_daily || e.rain_24h;
 
     return `
       ${hasTH ? this._tempHumiditySection() : ""}
+      ${this._config.show_sun_bar ? this._sunBarSection() : ""}
       ${hasWind ? this._windSection() : ""}
       ${hasRain ? `${this._sectionTitle("mdi:weather-rainy", "Pluie")}<div class="grid">
         ${e.rain_rate ? `<div class="stat" id="s-rain_rate"><div class="label">Intensité</div><div class="value">--</div></div>` : ""}
@@ -1192,12 +1228,29 @@ class EcowittWs90Card extends HTMLElement {
     return `
       <div class="th-section">
         <div class="th-header">
+          ${e.weather ? `<div class="th-weather" id="s-weather"><ha-icon icon="mdi:weather-cloudy"></ha-icon></div>` : ""}
           ${e.temperature ? `<div class="th-value" id="s-temperature"><ha-icon icon="mdi:thermometer" class="th-icon"></ha-icon><span class="value">--</span></div>` : ""}
           ${e.humidity ? `<div class="th-value" id="s-humidity"><ha-icon icon="mdi:water-percent" class="th-icon"></ha-icon><span class="value">--</span></div>` : ""}
         </div>
         ${e.temperature ? `<div class="th-minmax" id="th-minmax"></div>` : ""}
-        <div class="chart-legend" id="legend-th"></div>
-        <canvas id="chart-th-instant" class="th-canvas"></canvas>
+        ${e.temperature || e.humidity ? `<div class="chart-legend" id="legend-th"></div>
+        <canvas id="chart-th-instant" class="th-canvas"></canvas>` : ""}
+      </div>
+    `;
+  }
+
+  _sunBarSection() {
+    return `
+      <div class="sun-bar" id="sun-bar" style="display:none">
+        <div class="sun-row">
+          <div class="sun-end"><ha-icon id="sun-left-icon" icon="mdi:weather-sunset-up"></ha-icon><span id="sun-left-time">--:--</span></div>
+          <div class="sun-track">
+            <div class="sun-progress" id="sun-progress"></div>
+            <div class="sun-marker" id="sun-marker"></div>
+          </div>
+          <div class="sun-end"><span id="sun-right-time">--:--</span><ha-icon id="sun-right-icon" icon="mdi:weather-sunset-down"></ha-icon></div>
+        </div>
+        <div class="sun-label" id="sun-label"></div>
       </div>
     `;
   }
@@ -1274,6 +1327,17 @@ class EcowittWs90Card extends HTMLElement {
       if (el) el.querySelector(".value").innerHTML = html;
     };
 
+    if (e.weather) {
+      const holder = this._root.getElementById("s-weather");
+      const state = this._hass.states?.[e.weather]?.state;
+      const info = WEATHER_ICONS[state] || { icon: "mdi:help-circle-outline", label: state || "Météo inconnue" };
+      if (holder) {
+        holder.title = info.label;
+        const iconEl = holder.querySelector("ha-icon");
+        if (iconEl && iconEl.getAttribute("icon") !== info.icon) iconEl.setAttribute("icon", info.icon);
+      }
+    }
+    this._renderSunBar();
     if (e.temperature) set("temperature", `${fmt(this._stateNum(e.temperature))} °C`);
     if (e.humidity) set("humidity", `${fmt(this._stateNum(e.humidity), 0)} %`);
     if (e.wind_speed) {
@@ -1297,6 +1361,55 @@ class EcowittWs90Card extends HTMLElement {
     if (e.solar_radiation) set("solar_radiation", `${fmt(this._stateNum(e.solar_radiation), 0)} W/m²`);
     if (e.uv_index) set("uv_index", `${fmt(this._stateNum(e.uv_index), 1)}`);
     if (e.pressure) set("pressure", `${fmt(this._stateNum(e.pressure), 1)} hPa`);
+  }
+
+  _renderSunBar() {
+    if (!this._config.show_sun_bar || !this._hass) return;
+    const bar = this._root.getElementById("sun-bar");
+    if (!bar) return;
+    const st = this._hass.states?.[this._config.entities.sun || "sun.sun"];
+    const nextRising = st?.attributes?.next_rising ? new Date(st.attributes.next_rising).getTime() : NaN;
+    const nextSetting = st?.attributes?.next_setting ? new Date(st.attributes.next_setting).getTime() : NaN;
+    if (!st || Number.isNaN(nextRising) || Number.isNaN(nextSetting)) {
+      bar.style.display = "none";
+      return;
+    }
+
+    const DAY = 24 * 3600 * 1000;
+    const now = Date.now();
+    const isDay = st.state === "above_horizon";
+    // Fin de la phase en cours (coucher le jour, lever la nuit) : exacte.
+    const phaseEnd = isDay ? nextSetting : nextRising;
+    // Début de la phase en cours (lever du jour / coucher de la veille) :
+    // estimé à 24 h avant l'événement suivant de même type (écart de
+    // quelques minutes au plus), remplacé par l'heure réelle du changement
+    // d'état quand elle est cohérente avec l'estimation (elle ne l'est pas
+    // juste après un redémarrage de Home Assistant).
+    const estimate = (isDay ? nextRising : nextSetting) - DAY;
+    let phaseStart = estimate;
+    const changed = st.last_changed ? new Date(st.last_changed).getTime() : NaN;
+    if (!Number.isNaN(changed) && Math.abs(changed - estimate) <= 10 * 60 * 1000) phaseStart = changed;
+
+    const progress = Math.min(Math.max((now - phaseStart) / (phaseEnd - phaseStart), 0), 1);
+    const time = (ms) => new Date(ms).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    const minutes = Math.max(0, Math.round((phaseEnd - now) / 60000));
+    const remaining = minutes >= 60 ? `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, "0")}min` : `${minutes}min`;
+
+    const setText = (id, txt) => {
+      const el = this._root.getElementById(id);
+      if (el) el.textContent = txt;
+    };
+    setText("sun-left-time", time(phaseStart));
+    setText("sun-right-time", time(phaseEnd));
+    setText("sun-label", isDay ? `Coucher du soleil dans ${remaining}` : `Lever du soleil dans ${remaining}`);
+    this._root.getElementById("sun-left-icon")?.setAttribute("icon", isDay ? "mdi:weather-sunset-up" : "mdi:weather-sunset-down");
+    this._root.getElementById("sun-right-icon")?.setAttribute("icon", isDay ? "mdi:weather-sunset-down" : "mdi:weather-sunset-up");
+    const pct = `${(progress * 100).toFixed(1)}%`;
+    const fill = this._root.getElementById("sun-progress");
+    const marker = this._root.getElementById("sun-marker");
+    if (fill) fill.style.width = pct;
+    if (marker) marker.style.left = pct;
+    bar.style.display = "";
   }
 
   _stateNum(entityId) {
@@ -1715,6 +1828,10 @@ class EcowittWs90CardEditor extends HTMLElement {
         <label style="margin:0">Afficher les records de la station</label>
       </div>
       <div class="row checkbox-row">
+        <input type="checkbox" id="show_sun_bar" ${c.show_sun_bar ? "checked" : ""} />
+        <label style="margin:0">Afficher la barre de position du soleil (heures de lever et de coucher)</label>
+      </div>
+      <div class="row checkbox-row">
         <input type="checkbox" id="show_mini_graphs" ${c.show_mini_graphs ? "checked" : ""} />
         <label style="margin:0">Afficher le graphe température/humidité et les mini-graphiques radiation solaire/UV/pression (vue instantanée)</label>
       </div>
@@ -1752,6 +1869,10 @@ class EcowittWs90CardEditor extends HTMLElement {
       this._config.show_records = ev.target.checked;
       this._emitChange();
     });
+    this._root.getElementById("show_sun_bar").addEventListener("change", (ev) => {
+      this._config.show_sun_bar = ev.target.checked;
+      this._emitChange();
+    });
     this._root.getElementById("show_mini_graphs").addEventListener("change", (ev) => {
       this._config.show_mini_graphs = ev.target.checked;
       this._root.getElementById("mini_graph_period_row").style.display = ev.target.checked ? "" : "none";
@@ -1765,6 +1886,8 @@ class EcowittWs90CardEditor extends HTMLElement {
     this._root.querySelectorAll("ha-entity-picker").forEach((picker) => {
       const key = picker.dataset.key;
       picker.hass = this._hass;
+      if (key === "weather") picker.includeDomains = ["weather"];
+      if (key === "sun") picker.includeDomains = ["sun"];
       picker.value = this._config.entities[key] || "";
       picker.addEventListener("value-changed", (ev) => {
         this._config.entities[key] = ev.detail.value;
