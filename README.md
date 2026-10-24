@@ -96,6 +96,7 @@ default_mode: instant        # ou "historical"
 default_period: 24h          # 24h | 7d | 30d | 1y
 show_records: true
 show_mini_graphs: true
+show_sun_bar: true
 mini_graph_period: 24h        # 1h | 6h | 12h | 24h | 48h | 7d
 entities:
   temperature: sensor.outdoor_temperature
@@ -109,6 +110,8 @@ entities:
   solar_radiation: sensor.solar_radiation
   uv_index: sensor.uv_index
   pressure: sensor.pressure
+  weather: weather.maison       # icône de la météo actuelle
+  sun: sun.sun                  # facultatif, sun.sun par défaut
 ```
 
 Tous les champs sous `entities` sont **facultatifs** : n'indiquez que ceux
@@ -124,6 +127,7 @@ automatiquement.
 | `default_mode` | `instant` \| `historical` | `instant` | Vue affichée à l'ouverture |
 | `default_period` | `24h` \| `7d` \| `30d` \| `1y` | `24h` | Période par défaut de la vue Historique |
 | `show_records` | `true` \| `false` | `true` | Afficher le panneau des records |
+| `show_sun_bar` | `true` \| `false` | `true` | Afficher la barre de position du soleil (heures de lever et de coucher) |
 | `show_mini_graphs` | `true` \| `false` | `true` | Afficher le graphe température/humidité et les mini-graphiques radiation solaire/UV/pression |
 | `mini_graph_period` | `1h` \| `6h` \| `12h` \| `24h` \| `48h` \| `7d` | `24h` | Durée affichée par les mini-graphiques |
 | `entities.*` | `entity_id` | — | Voir tableau ci-dessous |
@@ -143,6 +147,8 @@ automatiquement.
 | `solar_radiation` | Radiation solaire | W/m² |
 | `uv_index` | Index UV | — |
 | `pressure` | Pression atmosphérique | hPa |
+| `weather` | Entité `weather.*` dont l'état fournit l'icône de la météo actuelle | — |
+| `sun` | Entité soleil (`sun.sun` par défaut), utilisée par la barre de position du soleil | — |
 
 Pour retrouver l'`entity_id` exact de vos capteurs : **Outils de
 développement > États**, et filtrez par le nom de votre appareil ou
@@ -170,6 +176,8 @@ fonctionner pour cette donnée (voir [Dépannage](#dépannage)).
 
 ## Détail des sections de la vue Instantanée
 
+- **Icône météo** : si une entité `weather` est configurée, son icône s'affiche en tout premier, avant la température et l'humidité (le nom de la condition apparaît au survol). Elle suit l'état de l'entité : ensoleillé, nuit claire, éclaircies, nuageux, brouillard, pluie, fortes pluies, orage, grêle, neige, venteux...
+- **Barre du soleil** : sous le graphe température/humidité, une barre indique où en est la journée. De jour, elle va du lever au coucher du soleil (« Coucher du soleil dans 5h 00min ») ; de nuit, du coucher au lever suivant (« Lever du soleil dans 13h 42min »). Elle s'appuie sur l'entité `sun.sun` de Home Assistant et se masque si elle n'existe pas.
 - **Température & humidité** : les deux courbes sur un même graphique,
   avec les valeurs actuelles au-dessus et, pour la température, le
   minimum et le maximum du **jour calendaire en cours** juste en dessous
