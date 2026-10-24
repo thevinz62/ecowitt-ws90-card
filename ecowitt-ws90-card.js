@@ -460,75 +460,56 @@ function drawCompass(canvas, degrees, size = 90) {
 
   const cx = size / 2;
   const cy = size / 2;
-  const r = size / 2 - 15;
+  // Dimensions de la flèche, et rayon du cercle réduit d'autant : la flèche
+  // est centrée sur le cercle et dépasse donc de sa demi-longueur.
+  const len = size * 0.09; // demi-longueur de la flèche
+  const wid = size * 0.07; // demi-largeur
+  const r = size / 2 - len - 3;
 
   const styles = getComputedStyle(canvas);
-  const textColor = styles.getPropertyValue("--secondary-text-color").trim() || "#888";
-  const gridColor = styles.getPropertyValue("--divider-color").trim() || "#ccc";
-  const accent = styles.getPropertyValue("--primary-color").trim() || "#03A9F4";
+  const textColor = styles.getPropertyValue("--primary-text-color").trim() || "#ddd";
+  const ringColor = styles.getPropertyValue("--secondary-text-color").trim() || "#888";
+  const accent = styles.getPropertyValue("--ecowitt-color").trim() || styles.getPropertyValue("--primary-color").trim() || "#03A9F4";
 
-  // Cercle extérieur
-  ctx.strokeStyle = gridColor;
+  const valid = degrees !== null && degrees !== undefined && !Number.isNaN(degrees);
+
+  // Cercle fin, sans graduations ni points cardinaux
+  ctx.strokeStyle = ringColor;
   ctx.lineWidth = 1;
+  ctx.globalAlpha = 0.5;
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.stroke();
+  ctx.globalAlpha = 1;
 
-  // Graduations toutes les 30°
-  for (let d = 0; d < 360; d += 30) {
-    const a = (d * Math.PI) / 180 - Math.PI / 2;
-    const inner = d % 90 === 0 ? r - 8 : r - 4;
-    ctx.beginPath();
-    ctx.moveTo(cx + inner * Math.cos(a), cy + inner * Math.sin(a));
-    ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a));
-    ctx.stroke();
-  }
-
-  // Points cardinaux
+  // Direction en texte au centre (ex. "SO")
   ctx.fillStyle = textColor;
-  ctx.font = "10px sans-serif";
+  ctx.font = `${Math.round(size * 0.14)}px sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const labelR = r + 10;
-  [
-    ["N", 0],
-    ["E", 90],
-    ["S", 180],
-    ["O", 270],
-  ].forEach(([lbl, deg]) => {
-    const a = (deg * Math.PI) / 180 - Math.PI / 2;
-    ctx.fillText(lbl, cx + labelR * Math.cos(a), cy + labelR * Math.sin(a));
-  });
+  ctx.fillText(valid ? windDirectionLabel(degrees) : "--", cx, cy);
 
-  // Aiguille pointant dans la direction vers laquelle souffle le vent
-  // (wind_bearing indique traditionnellement l'origine du vent, on ajoute
-  // donc 180° pour pointer vers la direction de destination)
-  if (degrees !== null && degrees !== undefined && !Number.isNaN(degrees)) {
-    const a = ((degrees + 180) * Math.PI) / 180 - Math.PI / 2;
-    const tipX = cx + (r - 6) * Math.cos(a);
-    const tipY = cy + (r - 6) * Math.sin(a);
+  if (!valid) return;
 
-    ctx.strokeStyle = accent;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(tipX, tipY);
-    ctx.stroke();
+  // Pointe de flèche posée sur le cercle, à l'endroit d'où vient le vent,
+  // orientée dans le sens où le vent souffle (vers le centre).
+  const from = (degrees * Math.PI) / 180;
+  const px = cx + r * Math.sin(from);
+  const py = cy - r * Math.cos(from);
+  const heading = from + Math.PI; // sens de déplacement du vent
 
-    const headSize = 6;
-    ctx.fillStyle = accent;
-    ctx.beginPath();
-    ctx.moveTo(tipX, tipY);
-    ctx.lineTo(tipX - headSize * Math.cos(a - 0.4), tipY - headSize * Math.sin(a - 0.4));
-    ctx.lineTo(tipX - headSize * Math.cos(a + 0.4), tipY - headSize * Math.sin(a + 0.4));
-    ctx.closePath();
-    ctx.fill();
-  }
-
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(heading);
   ctx.beginPath();
-  ctx.arc(cx, cy, 2.5, 0, Math.PI * 2);
+  ctx.moveTo(0, -len); // pointe
+  ctx.lineTo(wid, len * 0.85);
+  ctx.lineTo(0, len * 0.35); // creux à l'arrière
+  ctx.lineTo(-wid, len * 0.85);
+  ctx.closePath();
   ctx.fillStyle = accent;
   ctx.fill();
+  ctx.restore();
 }
 
 /* ============================================================================
@@ -1015,6 +996,8 @@ class EcowittWs90Card extends HTMLElement {
       .stat-graph .value { margin-top: 2px; }
       .stat-graph .sparkline { margin-top: 6px; margin-left: -10px; margin-right: -10px; margin-bottom: -10px; width: calc(100% + 20px) !important; }
       .section-title { font-size: 0.95rem; font-weight: 500; color: var(--primary-text-color); margin: 10px 0 4px; }
+      .section-title.with-icon { display: flex; align-items: center; gap: 8px; }
+      .section-title.with-icon ha-icon { --mdc-icon-size: 20px; color: var(--ecowitt-color); flex-shrink: 0; }
       .chart-block { margin-bottom: 18px; border: 1px solid var(--divider-color); border-radius: 10px; padding: 10px; box-sizing: border-box; }
       .chart-tooltip { position: fixed; display: none; pointer-events: none; z-index: 9999; background: var(--card-background-color); color: var(--primary-text-color); border: 1px solid var(--divider-color); border-radius: 6px; padding: 5px 8px; font-size: 0.72rem; line-height: 1.4; box-shadow: 0 2px 8px rgba(0,0,0,0.3); white-space: nowrap; }
       .chart-tooltip .tt-date { color: var(--secondary-text-color); font-size: 0.68rem; margin-bottom: 2px; }
@@ -1186,18 +1169,22 @@ class EcowittWs90Card extends HTMLElement {
     return `
       ${hasTH ? this._tempHumiditySection() : ""}
       ${hasWind ? this._windSection() : ""}
-      ${hasSun ? `<div class="section-title">Radiation solaire &amp; UV</div><div class="grid">
-        ${e.solar_radiation ? statWithGraph("solar_radiation", "Radiation solaire") : ""}
-        ${e.uv_index ? statWithGraph("uv_index", "Index UV") : ""}
-      </div>` : ""}
-      ${hasRain ? `<div class="section-title">Pluie</div><div class="grid">
+      ${hasRain ? `${this._sectionTitle("mdi:weather-rainy", "Pluie")}<div class="grid">
         ${e.rain_rate ? `<div class="stat" id="s-rain_rate"><div class="label">Intensité</div><div class="value">--</div></div>` : ""}
         ${e.rain_daily ? `<div class="stat" id="s-rain_daily"><div class="label">Cumul du jour</div><div class="value">--</div></div>` : ""}
         ${e.rain_24h ? `<div class="stat" id="s-rain_24h"><div class="label">Pluie sur 24 h</div><div class="value">--</div></div>` : ""}
       </div>` : ""}
-      ${e.pressure ? `<div class="section-title">Pression</div><div class="grid">${statWithGraph("pressure", "Pression")}</div>` : ""}
-      ${this._config.show_records ? `<div class="section-title">Records de la station</div><div class="records-grid" id="records-container"><div class="empty">Chargement…</div></div>` : ""}
+      ${e.pressure ? `${this._sectionTitle("mdi:gauge", "Pression")}<div class="grid">${statWithGraph("pressure", "Pression")}</div>` : ""}
+      ${hasSun ? `${this._sectionTitle("mdi:white-balance-sunny", "Radiation solaire &amp; UV")}<div class="grid">
+        ${e.solar_radiation ? statWithGraph("solar_radiation", "Radiation solaire") : ""}
+        ${e.uv_index ? statWithGraph("uv_index", "Index UV") : ""}
+      </div>` : ""}
+      ${this._config.show_records ? `${this._sectionTitle("mdi:trophy-outline", "Records de la station")}<div class="records-grid" id="records-container"><div class="empty">Chargement…</div></div>` : ""}
     `;
+  }
+
+  _sectionTitle(icon, label) {
+    return `<div class="section-title with-icon"><ha-icon icon="${icon}"></ha-icon><span>${label}</span></div>`;
   }
 
   _tempHumiditySection() {
@@ -1218,7 +1205,7 @@ class EcowittWs90Card extends HTMLElement {
   _windSection() {
     const e = this._config.entities;
     return `
-      <div class="section-title">Vent</div>
+      ${this._sectionTitle("mdi:weather-windy", "Vent")}
       <div class="wind-section">
         ${e.wind_direction ? `<canvas class="compass-canvas-lg" id="compass-canvas"></canvas>` : ""}
         <div class="wind-info">
